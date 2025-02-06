@@ -1,0 +1,39 @@
+# Package manager caches
+**/node_modules/
+**/.npm/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+
+# Build caches
+**/.gradle/
+**/.nuget/
+**/.cargo/
+**/.stack-work/
+**/.ccache/
+
+# IDE and Editor caches
+**/.idea/
+**/.vscode/
+**/*.swp
+**/*~
+
+# Temp files
+**/*.tmp
+**/*.temp
+**/*.bak
+
+**/*.meta
+**/package-lock.json
+
+# AI Specific
+.repo_ignore
+.cursorrules
+
+# Project Specific
+**/.husky
+**/prompts
+**/migrations
+**/public
+**/.next
+**/.swc

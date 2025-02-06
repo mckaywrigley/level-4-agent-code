@@ -1,0 +1,112 @@
+# ----------------------------------------------------------
+# This GitHub Actions workflow is called "AI Agent Flow".
+# It runs automatically when a pull request (PR) is opened
+# or updated against the "main" branch.
+#
+# It orchestrates:
+# 1) Checking out the repository code
+# 2) Setting up Node.js
+# 3) Installing dependencies
+# 4) Running the "ai-flow.ts" script, which is where our
+#    AI logic lives and does iterative code/test generation
+#    and code review.
+# ----------------------------------------------------------
+
+name: AI Agent Flow
+
+# ----------------------------------------------------------
+# The "on" field tells GitHub Actions when to trigger this workflow.
+# Here, it triggers whenever a pull request is made to the 'main' branch.
+# ----------------------------------------------------------
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  ai-agent:
+    # ----------------------------------------------------------
+    # "runs-on" tells GitHub Actions what type of machine to run on.
+    # "ubuntu-latest" is a Linux virtual machine that comes with
+    # many tools preinstalled (Node.js, etc.).
+    # ----------------------------------------------------------
+    runs-on: ubuntu-latest
+
+    # ----------------------------------------------------------
+    # "permissions" are the OAuth scopes this job has to access
+    # or modify GitHub data. We need "contents: write" to push
+    # new files (like tests) to the PR branch, and "pull-requests: write"
+    # to create or update PR comments, etc.
+    # ----------------------------------------------------------
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      # --------------------------------------------
+      # 0) Immediately post a comment on the PR
+      #    letting users know the agent is spinning up.
+      # --------------------------------------------
+      - name: Post early "Agent starting" comment
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Creating an immediate placeholder comment..."
+          curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            -d '{"body":"⚙️ AI Agent is starting up. Be back soon with a code review and test generation!"}' \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+
+      # ----------------------------------------------------------
+      # 1) Check out the repository code.
+      # This uses the official "actions/checkout" action, which
+      # clones your repo into the runner machine so subsequent
+      # steps can work with the code.
+      # ----------------------------------------------------------
+      - uses: actions/checkout@v3
+
+      # ----------------------------------------------------------
+      # 2) Set up Node.js environment.
+      # This uses "actions/setup-node" to ensure our runner has
+      # Node v18 installed, so we can run our TypeScript/Jest scripts.
+      # ----------------------------------------------------------
+      - name: Set up Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      # ----------------------------------------------------------
+      # 3) Install dependencies using npm ci.
+      # This command ensures a clean install of packages based
+      # on your package-lock.json file.
+      # ----------------------------------------------------------
+      - name: Install dependencies
+        run: npm ci
+
+      # ----------------------------------------------------------
+      # 4) Run the AI Flow script.
+      #
+      # - We call "npx tsx scripts/ai-flow.ts" which:
+      #   * Launches the TypeScript script that contains our AI logic.
+      #   * This script does code review, test generation, iterative fixes, etc.
+      #
+      # - We pass the environment variables it needs (OPENAI_API_KEY,
+      #   ANTHROPIC_API_KEY, LLM_PROVIDER, GITHUB_TOKEN) from GitHub secrets.
+      #
+      # - Note: We don't automatically fail this step if the script
+      #   returns a non-zero exit code. However, inside the script,
+      #   we do set "process.exit(1)" if something goes wrong, which
+      #   will still cause the action to fail. You have the flexibility
+      #   to handle success/failure logic within "ai-flow.ts".
+      # ----------------------------------------------------------
+      - name: Run AI Flow
+        run: |
+          npx tsx scripts/ai-flow.ts
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

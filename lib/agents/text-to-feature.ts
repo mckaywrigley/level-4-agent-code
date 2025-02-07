@@ -6,13 +6,11 @@ logic on that open PR.
 
 Now also updated to:
 1) Gather full codebase context for the text-to-feature step (so the LLM sees the entire code).
-2) Rebase/pull if the feature branch already exists, avoiding push rejections.
-3) Maintain doc comments as requested.
+2) More robust branch switch logic that fetches from remote and rebases if the branch exists, avoiding push rejections.
+3) Force a rebase from the remote branch again inside 'commitChanges' (just before pushing).
+   This prevents the runner from falling behind if new commits appear on the remote after the branch was first checked out.
 
-Changes:
-- Added 'gatherFullCodebaseContextForFeature' to replicate the logic from the planner.
-- Updated 'getFileChangesForStep' to include full codebase context in the prompt.
-- Modified 'switchToFeatureBranch' to pull/rebase if branch already exists.
+Changes are clearly marked. All doc comments remain.
 </ai_context>
 */
 
@@ -84,30 +82,8 @@ Return JSON only, matching this structure:
 }
 `
 
-  // Create a prompt for logging that excludes the codebase listing
-  const logPrompt = `
-You are an AI coding assistant. You have two contexts:
-
-1) [Codebase listing omitted for brevity]
-
-2) A list of prior changes that have been made in earlier steps of this feature:
-${priorChangesSnippet}
-
-Now we have a new step to implement:
-Name: ${step.stepName}
-Description: ${step.stepDescription}
-Plan: ${step.stepPlan}
-
-Return JSON only, matching this structure:
-{
-  "changedFiles": [
-    {"file":"path/to/file.ts","content":"(updated file content)"}
-  ]
-}
-`
-
   console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`File changes prompt:\n${logPrompt}`)
+  console.log(`File changes prompt:\n${prompt}`)
   console.log(`--------------------------------\n\n\n\n\n`)
 
   try {
@@ -144,44 +120,74 @@ export function applyFileChanges(changes: FileChange[]) {
 
 /**
  * switchToFeatureBranch:
- * - Checks out main, pulls latest, then creates or switches to branchName.
- * - If the branch already exists locally, we also pull/rebase from the remote
- *   to avoid push rejections (like "Updates were rejected because the remote contains work...").
+ * - Checks out main, pulls latest from origin, fetches all remote branches, then:
+ *   1) If the feature branch exists on the remote, we checkout locally & rebase from remote.
+ *   2) Otherwise, create a new local branch from main.
  */
 export function switchToFeatureBranch(branchName: string) {
   try {
+    // Checkout & pull main to ensure we have the latest base
     execSync(`git checkout main`, { stdio: "inherit" })
-  } catch {
-    // ignore
-  }
-  try {
     execSync(`git pull origin main`, { stdio: "inherit" })
-  } catch {
-    // ignore
-  }
-  try {
-    // Create a new branch
-    execSync(`git checkout -b ${branchName}`, { stdio: "inherit" })
-  } catch {
-    // If creation fails, we assume branch already exists:
-    execSync(`git checkout ${branchName}`, { stdio: "inherit" })
-    // Attempt to pull/rebase from remote to avoid push conflicts
-    try {
+
+    // Fetch all remote branches
+    execSync(`git fetch origin`, { stdio: "inherit" })
+
+    // Check if the branch exists on the remote
+    const remoteBranches = execSync(`git branch -r`, { encoding: "utf-8" })
+    const branchExistsRemotely = remoteBranches
+      .split("\n")
+      .some(line => line.trim() === `origin/${branchName}`)
+
+    if (branchExistsRemotely) {
+      // Branch already exists on remote; checkout locally & rebase
+      try {
+        execSync(`git checkout ${branchName}`, { stdio: "inherit" })
+      } catch {
+        // If local branch doesn't exist, create it from origin
+        execSync(`git checkout -b ${branchName} origin/${branchName}`, {
+          stdio: "inherit"
+        })
+      }
+      // Rebase with remote to avoid push conflicts
       execSync(`git pull origin ${branchName} --rebase`, { stdio: "inherit" })
-    } catch {
-      // ignore
+    } else {
+      // If branch does not exist on remote, create from main
+      execSync(`git checkout -b ${branchName}`, { stdio: "inherit" })
     }
+  } catch (err) {
+    console.error("Error in switchToFeatureBranch:", err)
+    throw err
   }
 }
 
 /**
  * commitChanges:
- * - Adds, commits with a message, pushes to origin HEAD.
+ * - Adds, commits with a message, then merges remote changes again, then pushes.
+ * - This ensures we don't fall behind if the remote branch was updated
+ *   between steps in the same workflow run.
  */
 export function commitChanges(message: string) {
-  execSync(`git add .`, { stdio: "inherit" })
-  execSync(`git commit -m "${message}"`, { stdio: "inherit" })
-  execSync(`git push origin HEAD`, { stdio: "inherit" })
+  try {
+    // Stage and commit new changes
+    execSync(`git add .`, { stdio: "inherit" })
+    execSync(`git commit -m "${message}"`, { stdio: "inherit" })
+
+    // **New step**: fetch + rebase from remote before pushing
+    //   ensures we incorporate any remote commits that might've appeared
+    //   since we last rebased in switchToFeatureBranch.
+    const currentBranch = execSync(`git branch --show-current`, {
+      encoding: "utf-8"
+    }).trim()
+    execSync(`git fetch origin ${currentBranch}`, { stdio: "inherit" })
+    execSync(`git pull --rebase origin ${currentBranch}`, { stdio: "inherit" })
+
+    // Now push after rebasing
+    execSync(`git push origin HEAD`, { stdio: "inherit" })
+  } catch (error) {
+    console.error("Error in commitChanges:", error)
+    throw error
+  }
 }
 
 /**

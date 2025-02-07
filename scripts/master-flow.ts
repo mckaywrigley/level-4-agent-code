@@ -6,6 +6,9 @@ logic on a PR. This ensures each step gets an AI code review + test generation
 + iterative test fixing, just like we previously did on normal pull requests.
 
 Finally, after all steps pass, we run one last check and then open the PR fully.
+
+Now also updated to handle excessively long feature request strings by
+shortening the derived branch name to avoid Git/folder name length errors.
 </ai_context>
 */
 
@@ -45,16 +48,28 @@ async function main() {
   const [owner, repo] = repoStr.split("/")
   const octokit = new Octokit({ auth: githubToken })
 
-  // 1) Switch/create the agent/<feature> branch locally
-  const safeName = featureRequest
+  // 1) Create a shortened/safe name from the feature request
+  //    to avoid "File name too long" Git issues.
+  let safeName = featureRequest
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/[^a-z0-9]+/g, "-") // convert any non-alphanumeric to hyphen
+    .replace(/^-+|-+$/g, "") // remove leading/trailing hyphens
+
+  // Force branch name to a max length (Git typically allows up to 255,
+  // but we keep it shorter for safety). Let's limit to 50 characters.
+  const MAX_BRANCH_LENGTH = 50
+  if (safeName.length > MAX_BRANCH_LENGTH) {
+    safeName = safeName.substring(0, MAX_BRANCH_LENGTH)
+    // remove trailing hyphen if we truncated in the middle of a replacement
+    safeName = safeName.replace(/-+$/, "")
+  }
+
   const branchName = `agent/${safeName}`
 
+  // 2) Switch/create the agent/<feature> branch locally
   switchToFeatureBranch(branchName)
 
-  // 2) Plan steps (Planner Agent)
+  // 3) Plan steps (Planner Agent)
   console.log(`\n--- Planning steps for: ${featureRequest} ---\n`)
   const steps = await runPlanner(featureRequest)
 
@@ -63,10 +78,10 @@ async function main() {
     process.exit(0)
   }
 
-  // 3) We'll store all changes in an array, so the LLM sees them in subsequent steps
+  // 4) We'll store all changes in an array, so the LLM sees them in subsequent steps
   let accumulatedChanges: FileChange[] = []
 
-  // 4) Generate/commit the FIRST step (so the branch has a commit)
+  // 5) Generate/commit the FIRST step (so the branch has a commit)
   const firstStep = steps[0]
   console.log(`\n--- Step 1: ${firstStep.stepName} ---\n`)
 
@@ -78,7 +93,6 @@ async function main() {
 
   // Add them to our "accumulated" record
   for (const fc of firstChanges) {
-    // remove any old version
     accumulatedChanges = accumulatedChanges.filter(a => a.file !== fc.file)
     accumulatedChanges.push(fc)
   }
@@ -86,11 +100,7 @@ async function main() {
   // Commit and push
   commitChanges(`Step 1: ${firstStep.stepName}`)
 
-  // You might want to do an explicit push to the new branch name:
-  // (Depending on your code in commitChanges, it might already push HEAD.)
-  // execSync(`git push origin ${branchName}`, { stdio: "inherit" })
-
-  // 5) Now that the branch has commits, create/find the PR
+  // 6) Now that the branch has commits, create/find the PR
   const prNumber = await ensurePullRequest(
     octokit,
     owner,
@@ -100,14 +110,14 @@ async function main() {
   )
   console.log(`PR #${prNumber} created/found.`)
 
-  // 6) Run partial AI flow on the first commit
+  // 7) Run partial AI flow on the first commit
   let success = await runFlowOnLatestCommit(octokit, owner, repo, prNumber)
   if (!success) {
     console.error(`Tests failed on step 1. Exiting.`)
     process.exit(1)
   }
 
-  // 7) If more steps remain, handle them
+  // 8) If more steps remain, handle them
   for (let i = 1; i < steps.length; i++) {
     const step: Step = steps[i]
     console.log(`\n--- Step ${i + 1}: ${step.stepName} ---\n`)
@@ -130,7 +140,7 @@ async function main() {
     }
   }
 
-  // 8) After all steps pass, run a final full PR review
+  // 9) After all steps pass, run a final full PR review
   console.log("All steps done. Doing final full PR review.")
   const finalSuccess = await runFlowOnPR(octokit, owner, repo, prNumber)
   if (!finalSuccess) {
@@ -138,7 +148,7 @@ async function main() {
     process.exit(1)
   }
 
-  // 9) Mark the PR “ready for review” or do any final updates
+  // 10) Mark the PR “ready for review” or do any final updates
   try {
     await octokit.pulls.update({
       owner,

@@ -18,16 +18,19 @@ import { getLLMModel } from "./llm"
 
 /**
  * changesSchema:
- * - We expect an array of objects, each with "file" and "content".
+ * - We expect an object with a single key "changedFiles"
+ * - "changedFiles" is an array of objects, each with "file" and "content".
  * - "file" is the path to the file (e.g. "app/page.tsx")
  * - "content" is the full new content for that file.
  */
-const changesSchema = z.array(
-  z.object({
-    file: z.string(),
-    content: z.string()
-  })
-)
+const changesSchema = z.object({
+  changedFiles: z.array(
+    z.object({
+      file: z.string(),
+      content: z.string()
+    })
+  )
+})
 
 /**
  * getFileChangesForStep:
@@ -40,7 +43,7 @@ export async function getFileChangesForStep(
 ): Promise<FileChange[]> {
   const model = getLLMModel()
 
-  // We’ll present the prior changes so the LLM can see them
+  // We'll present the prior changes so the LLM can see them
   const priorChangesSnippet = accumulatedChanges
     .map(c => `File: ${c.file}\n---\n${c.content}`)
     .join("\n\n")
@@ -55,9 +58,11 @@ Description: ${step.stepDescription}
 Plan: ${step.stepPlan}
 
 Given the existing modifications above, propose any additional or updated files needed for this step. Return JSON only:
-[
-  {"file":"path/to/whatever.ts","content":"..."}
-]
+{
+  "changedFiles": [
+    {"file":"path/to/whatever.ts","content":"..."}
+  ]
+}
 `
   console.log(`\n\n\n\n\n--------------------------------`)
   console.log(`File changes prompt:\n${prompt}`)
@@ -76,8 +81,9 @@ Given the existing modifications above, propose any additional or updated files 
       `File changes result:\n${JSON.stringify(result.object, null, 2)}`
     )
     console.log(`--------------------------------\n\n\n\n\n`)
-    return result.object
-  } catch {
+    return result.object.changedFiles
+  } catch (error: any) {
+    console.error("Error in getFileChangesForStep:", error)
     return []
   }
 }
@@ -86,7 +92,7 @@ Given the existing modifications above, propose any additional or updated files 
  * applyFileChanges:
  * - Writes each { file, content } to disk, creating dirs as necessary.
  */
-export function applyFileChanges(changes: { file: string; content: string }[]) {
+export function applyFileChanges(changes: FileChange[]) {
   for (const change of changes) {
     const target = path.join(process.cwd(), change.file)
     fs.mkdirSync(path.dirname(target), { recursive: true })

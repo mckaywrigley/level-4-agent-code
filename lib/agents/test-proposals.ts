@@ -132,7 +132,9 @@ Return only valid JSON matching this structure:
 }
 
 Recommendation:
+<recommendation>
 ${recommendation}
+</recommendation>
 
 Title: ${context.title}
 Commits:

@@ -14,6 +14,7 @@ All doc comments remain, with the final fix ensuring we never fetch a remote bra
 </ai_context>
 */
 
+import { codeRules } from "@/constants/code-rules"
 import { FileChange } from "@/types/file-types"
 import { Step } from "@/types/step-types"
 import { Octokit } from "@octokit/rest"
@@ -64,10 +65,19 @@ export async function getFileChangesForStep(
 You are an AI coding assistant. You have two contexts:
 
 1) The entire current codebase (excluding huge/unnecessary files):
+<codebase-listing>
 ${codebaseListing}
+</codebase-listing>
 
 2) A list of prior changes that have been made in earlier steps of this feature:
+<prior-changes>
 ${priorChangesSnippet}
+</prior-changes>
+
+3) Some rules for the codebase:
+<code-rules>
+${codeRules}
+</code-rules>
 
 Now we have a new step to implement:
 Name: ${step.stepName}

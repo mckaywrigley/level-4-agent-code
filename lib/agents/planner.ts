@@ -7,6 +7,7 @@ so it can plan more accurately in the context of the existing code.
 </ai_context>
 */
 
+import { codeRules } from "@/constants/code-rules"
 import { Step } from "@/types/step-types"
 import { generateObject } from "ai"
 import * as fs from "fs"
@@ -64,7 +65,14 @@ You are an AI planner. Given the user's request:
 
 Below is the codebase context, showing file paths and contents (truncated if large). Use it to plan changes. Do not provide the entire code again, just keep in mind it's here for reference:
 
+<codebase-listing>
 ${codebaseListing}
+</codebase-listing>
+
+Here are some rules for the codebase:
+<code-rules>
+${codeRules}
+</code-rules>
 
 Now, break the user's request into a concise ordered list of steps to implement. Return valid JSON only, with the structure:
 {

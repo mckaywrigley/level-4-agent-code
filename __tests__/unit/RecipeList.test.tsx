@@ -6,8 +6,7 @@ import RecipeList from '@/app/recipes/_components/recipe-list';
 describe('RecipeList Component', () => {
   it('renders a message when no recipes are provided', () => {
     render(<RecipeList initialData={[]} />);
-    // Use regex to reliably match the expected message despite potential markup issues
-    expect(screen.getByText(/No recipes found\./i)).toBeInTheDocument();
+    expect(screen.getByText('No recipes found.')).toBeInTheDocument();
   });
 
   it('renders a list of recipes when data is provided', () => {
@@ -20,7 +19,7 @@ describe('RecipeList Component', () => {
     // Check for list heading
     expect(screen.getByText('Recipe List')).toBeInTheDocument();
 
-    // Check each recipe
+    // Check for each recipe name and description
     sampleRecipes.forEach(recipe => {
       expect(screen.getByText(recipe.name)).toBeInTheDocument();
       expect(screen.getByText(recipe.description)).toBeInTheDocument();

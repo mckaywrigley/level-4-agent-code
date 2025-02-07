@@ -113,8 +113,8 @@ export async function runFlowOnLatestCommit(
     await updateComment(octokit, partialTestContext, testCommentId, testBody)
     return true
   } else {
-    testBody += `\n\n❌ Tests failing on latest commit after ${maxIterations} fix attempts. Make sure to review the latest commit and fix any issues.`
+    testBody += `\n\n❌ Tests failing on latest commit after ${maxIterations} fix attempts.`
     await updateComment(octokit, partialTestContext, testCommentId, testBody)
-    return true // returning true to continue the flow
+    return false
   }
 }

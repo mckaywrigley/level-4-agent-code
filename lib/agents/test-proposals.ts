@@ -114,8 +114,11 @@ async function generateTestsForChanges(
 You are an expert developer specializing in test generation.
 
 You only generate tests for frontend related code in the /app directory.
-
 You only generate unit tests in the __tests__/unit directory.
+
+IMPORTANT: 
+- If the code references React/JSX, ensure any test files are named ".test.tsx" — never ".test.ts".
+- Do not produce duplicates where you have both .test.ts and .test.tsx for the same component.
 
 Return only valid JSON matching this structure:
 {
@@ -173,13 +176,15 @@ ${existingTestsPrompt}
  * finalizeTestProposals:
  * - Adjusts test file naming or paths to ensure they adhere to typical patterns (e.g. .test.tsx for React).
  * - Ensures tests end up under __tests__/unit/ if not specified.
+ * - **NEW**: If both a .test.ts and a .test.tsx are proposed for the same base, we keep only the .test.tsx.
  */
 function finalizeTestProposals(
   rawProposals: TestProposal[],
   context: PullRequestContextWithTests
 ): TestProposal[] {
-  return rawProposals.map(proposal => {
-    // Decide if it's a React-based test. If any changed file is .tsx or references React, we assume yes.
+  // Map each proposed file to either .test.tsx or .test.ts
+  let proposals = rawProposals.map(proposal => {
+    // Decide if it's likely a React-based test
     const isReact = context.changedFiles.some(file => {
       if (!file.content) return false
       return (
@@ -192,10 +197,11 @@ function finalizeTestProposals(
 
     let newFilename = proposal.filename
 
-    // Enforce the .test.tsx or .test.ts extension
+    // If it's a React-based test, ensure .test.tsx
     if (isReact && !newFilename.endsWith(".test.tsx")) {
       newFilename = newFilename.replace(/\.test\.ts$/, ".test.tsx")
     } else if (!isReact && !newFilename.endsWith(".test.ts")) {
+      // If not React-based, ensure .test.ts
       newFilename = newFilename.replace(/\.test\.tsx$/, ".test.ts")
     }
 
@@ -206,6 +212,43 @@ function finalizeTestProposals(
 
     return { ...proposal, filename: newFilename }
   })
+
+  // **NEW**: Remove duplicates if we have both .test.ts and .test.tsx for the same base name
+  const seenBases = new Map<string, TestProposal>()
+  const filtered: TestProposal[] = []
+
+  for (const proposal of proposals) {
+    // Derive base name (e.g. "RecipeForm" from "RecipeForm.test.ts" or "RecipeForm.test.tsx")
+    const baseName = proposal.filename.replace(/\.test\.tsx?$/, "")
+    const existing = seenBases.get(baseName)
+
+    if (!existing) {
+      // Not seen yet, store it
+      seenBases.set(baseName, proposal)
+      filtered.push(proposal)
+    } else {
+      // We already have a proposal with the same base name
+      // If the new one is .test.tsx but the old is .test.ts, prefer the .test.tsx
+      const oldIsTsx = existing.filename.endsWith(".test.tsx")
+      const newIsTsx = proposal.filename.endsWith(".test.tsx")
+
+      if (newIsTsx && !oldIsTsx) {
+        // We replace the old .test.ts with the new .test.tsx
+        const indexToRemove = filtered.indexOf(existing)
+        if (indexToRemove !== -1) {
+          filtered.splice(indexToRemove, 1)
+        }
+        filtered.push(proposal)
+        seenBases.set(baseName, proposal)
+      } else {
+        // If the old one is already .test.tsx, keep it
+        // Or if they are both the same extension, just keep the first
+        // (Adjust logic to your preference if needed)
+      }
+    }
+  }
+
+  return filtered
 }
 
 /**
@@ -213,14 +256,6 @@ function finalizeTestProposals(
  * - For each test proposal, we either create or update the file in the PR branch.
  * - We also handle "rename" actions by deleting the old file.
  * - This is where we actually push commits back to GitHub using Octokit.
- */
-/**
- * Commits test files to both GitHub repository and local filesystem
- * @param octokit - GitHub API client
- * @param owner - Repository owner
- * @param repo - Repository name
- * @param branch - Target branch name
- * @param proposals - Array of test proposals to commit
  */
 async function commitTests(
   octokit: any,

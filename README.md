@@ -1,4 +1,4 @@
-# Level 4 Agent – Multi-Step Feature Implementation with Partial & Full AI Review
+# Level 4 Agent – Text-to-Feature Agent
 
 This repository demonstrates a **Level 4 AI Agent** that plans and implements a feature in multiple steps, automatically performing code review, test generation, and iterative fixes _per commit_ (partial review), and then a final full review at the end.
 

@@ -62,7 +62,9 @@ export async function getFileChangesForStep(
   const codebaseListing = gatherFullCodebaseContextForFeature(process.cwd())
 
   const prompt = `
-You are an AI coding assistant. You have two contexts:
+You are an frontend AI coding assistant. You *only* write frontend code. Another AI will handle other parts of the codebase.
+
+You have three contexts:
 
 1) The entire current codebase (excluding huge/unnecessary files):
 <codebase-listing>

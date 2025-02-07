@@ -59,8 +59,9 @@ export async function runPlanner(featureRequest: string): Promise<Step[]> {
   // We'll place the codebase listing after the user request, so the LLM can plan with full context
   // But let's keep a comment telling it: "Here is the codebase context"
   const prompt = `
-You are an AI planner. Given the user's request:
+You are a frontend AI planner. You *only* plan frontend code. Another AI will handle other parts of the codebase.
 
+Given the user's request:
 "${featureRequest}"
 
 Below is the codebase context, showing file paths and contents (truncated if large). Use it to plan changes. Do not provide the entire code again, just keep in mind it's here for reference:

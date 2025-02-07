@@ -1,33 +1,28 @@
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import RecipeList from '@/app/recipes/_components/recipe-list';
 
+const sampleRecipes = [
+  { name: 'Spaghetti', description: 'Delicious pasta with tomato sauce' },
+  { name: 'Salad', description: 'Fresh green salad' }
+];
+
 describe('RecipeList Component', () => {
-  it('displays a message when there are no recipes', () => {
+  it('renders message when no recipes found', () => {
     render(<RecipeList initialData={[]} />);
     expect(screen.getByText('No recipes found.')).toBeInTheDocument();
   });
 
-  it('renders a list of recipes when data is provided', () => {
-    const sampleData = [
-      { name: 'Pancakes', description: 'Fluffy pancakes' },
-      { name: 'Omelette', description: 'Cheesy omelette' }
-    ];
-    render(<RecipeList initialData={sampleData} />);
-    
-    // Check for recipe list title
-    expect(screen.getByText('Recipe List')).toBeInTheDocument();
-
-    // Check for recipe items
-    expect(screen.getByText('Pancakes')).toBeInTheDocument();
-    expect(screen.getByText('Fluffy pancakes')).toBeInTheDocument();
-    expect(screen.getByText('Omelette')).toBeInTheDocument();
-    expect(screen.getByText('Cheesy omelette')).toBeInTheDocument();
+  it('renders a list of recipes with names and descriptions', () => {
+    render(<RecipeList initialData={sampleRecipes} />);
+    expect(screen.getByText('Spaghetti')).toBeInTheDocument();
+    expect(screen.getByText('Salad')).toBeInTheDocument();
+    expect(screen.getByText('Delicious pasta with tomato sauce')).toBeInTheDocument();
+    expect(screen.getByText('Fresh green salad')).toBeInTheDocument();
   });
 
-  it('renders fallback text for recipes without a name', () => {
-    const sampleData = [{ description: 'No name provided' }];
-    render(<RecipeList initialData={sampleData} />);
+  it('displays "Unnamed Recipe" when recipe name is missing', () => {
+    const recipes = [{ description: 'No name provided' }];
+    render(<RecipeList initialData={recipes} />);
     expect(screen.getByText('Unnamed Recipe')).toBeInTheDocument();
   });
 });

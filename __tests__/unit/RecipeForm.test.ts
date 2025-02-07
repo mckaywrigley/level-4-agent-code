@@ -1,91 +1,104 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import RecipeForm from '@/app/recipes/_components/recipe-form';
+import '@testing-library/jest-dom';
 
-// The RecipeForm component uses fetch for API calls, so we mock fetch.
+// Mock the fetch API
+const mockFetch = jest.fn();
+
+beforeAll(() => {
+  // @ts-ignore
+  global.fetch = mockFetch;
+});
+
+beforeEach(() => {
+  mockFetch.mockClear();
+});
 
 describe('RecipeForm Component', () => {
-  beforeEach(() => {
-    jest.spyOn(global, 'fetch');
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  it('renders form input fields correctly', () => {
+  it('renders form inputs and button', () => {
     render(<RecipeForm />);
-    const titleInput = screen.getByLabelText(/Recipe Title/i);
-    const ingredientsTextarea = screen.getByLabelText(/Ingredients/i);
-    const instructionsTextarea = screen.getByLabelText(/Instructions/i);
 
-    expect(titleInput).toBeInTheDocument();
-    expect(ingredientsTextarea).toBeInTheDocument();
-    expect(instructionsTextarea).toBeInTheDocument();
+    expect(screen.getByLabelText(/Recipe Title/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Ingredients/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Instructions/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Submit Recipe/i })).toBeInTheDocument();
   });
 
-  it('submits the form and clears inputs on successful submission', async () => {
-    // Mocking a successful response
-    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ message: 'Recipe created' })
-    } as Response);
+  it('submits the form and resets inputs on successful submission', async () => {
+    // Setup mock fetch to resolve with ok response
+    mockFetch.mockResolvedValueOnce({ ok: true });
 
     render(<RecipeForm />);
-    const titleInput = screen.getByLabelText(/Recipe Title/i);
-    const ingredientsTextarea = screen.getByLabelText(/Ingredients/i);
-    const instructionsTextarea = screen.getByLabelText(/Instructions/i);
-    const submitButton = screen.getByRole('button', { name: /submit recipe/i });
 
-    // Fill in form fields
-    fireEvent.change(titleInput, { target: { value: 'Test Recipe' } });
-    fireEvent.change(ingredientsTextarea, { target: { value: 'Ingredient1, Ingredient2' } });
-    fireEvent.change(instructionsTextarea, { target: { value: 'Mix ingredients and bake' } });
+    const titleInput = screen.getByLabelText(/Recipe Title/i);
+    const ingredientsInput = screen.getByLabelText(/Ingredients/i);
+    const instructionsInput = screen.getByLabelText(/Instructions/i);
+    const submitButton = screen.getByRole('button', { name: /Submit Recipe/i });
+
+    // Fill in inputs
+    fireEvent.change(titleInput, { target: { value: 'Chocolate Cake' } });
+    fireEvent.change(ingredientsInput, { target: { value: 'Flour, Sugar, Cocoa' } });
+    fireEvent.change(instructionsInput, { target: { value: 'Mix and bake' } });
 
     // Submit the form
     fireEvent.click(submitButton);
 
+    // Button should display 'Submitting...'
+    expect(screen.getByRole('button')).toHaveTextContent('Submitting...');
+
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/api/recipes', expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: 'Test Recipe',
-          ingredients: 'Ingredient1, Ingredient2',
-          instructions: 'Mix ingredients and bake'
-        })
-      }));
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
+
+    // Validate fetch was called with correct parameters
+    expect(mockFetch).toHaveBeenCalledWith('/api/recipes', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Chocolate Cake',
+        ingredients: 'Flour, Sugar, Cocoa',
+        instructions: 'Mix and bake'
+      })
+    }));
 
     // After submission, inputs should be cleared
     await waitFor(() => {
-      expect((titleInput as HTMLInputElement).value).toBe('');
-      expect((ingredientsTextarea as HTMLTextAreaElement).value).toBe('');
-      expect((instructionsTextarea as HTMLTextAreaElement).value).toBe('');
+      expect(titleInput).toHaveValue('');
+      expect(ingredientsInput).toHaveValue('');
+      expect(instructionsInput).toHaveValue('');
     });
   });
 
-  it('handles fetch errors gracefully', async () => {
-    // Simulate a fetch error
-    jest.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('Network Error'));
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  it('handles submission failure gracefully', async () => {
+    // Setup mock fetch to resolve with not ok response
+    mockFetch.mockResolvedValueOnce({ ok: false });
+
+    // Spy on console.error
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
     render(<RecipeForm />);
+
     const titleInput = screen.getByLabelText(/Recipe Title/i);
-    const ingredientsTextarea = screen.getByLabelText(/Ingredients/i);
-    const instructionsTextarea = screen.getByLabelText(/Instructions/i);
-    const submitButton = screen.getByRole('button', { name: /submit recipe/i });
+    const ingredientsInput = screen.getByLabelText(/Ingredients/i);
+    const instructionsInput = screen.getByLabelText(/Instructions/i);
+    const submitButton = screen.getByRole('button', { name: /Submit Recipe/i });
 
-    fireEvent.change(titleInput, { target: { value: 'Test Recipe' } });
-    fireEvent.change(ingredientsTextarea, { target: { value: 'Ingredient1, Ingredient2' } });
-    fireEvent.change(instructionsTextarea, { target: { value: 'Mix ingredients and bake' } });
-
+    // Fill in inputs
+    fireEvent.change(titleInput, { target: { value: 'Pancakes' } });
+    fireEvent.change(ingredientsInput, { target: { value: 'Flour, Eggs, Milk' } });
+    fireEvent.change(instructionsInput, { target: { value: 'Mix and fry' } });
+    
+    // Submit the form
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Error submitting recipe:'), expect.any(Error));
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
-    consoleSpy.mockRestore();
+    // Expect error log on failed submission
+    expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to submit recipe');
+
+    consoleErrorSpy.mockRestore();
   });
 });

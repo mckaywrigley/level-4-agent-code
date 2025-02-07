@@ -82,8 +82,13 @@ Return JSON only, matching this structure:
 }
 `
 
+  // Log prompt without codebase listing for readability
+  const promptWithoutCodebase = prompt.replace(
+    codebaseListing,
+    "[codebase listing omitted]"
+  )
   console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`File changes prompt:\n${prompt}`)
+  console.log(`File changes prompt:\n${promptWithoutCodebase}`)
   console.log(`--------------------------------\n\n\n\n\n`)
 
   try {

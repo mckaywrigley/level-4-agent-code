@@ -84,8 +84,30 @@ Return JSON only, matching this structure:
 }
 `
 
+  // Create a prompt for logging that excludes the codebase listing
+  const logPrompt = `
+You are an AI coding assistant. You have two contexts:
+
+1) [Codebase listing omitted for brevity]
+
+2) A list of prior changes that have been made in earlier steps of this feature:
+${priorChangesSnippet}
+
+Now we have a new step to implement:
+Name: ${step.stepName}
+Description: ${step.stepDescription}
+Plan: ${step.stepPlan}
+
+Return JSON only, matching this structure:
+{
+  "changedFiles": [
+    {"file":"path/to/file.ts","content":"(updated file content)"}
+  ]
+}
+`
+
   console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`File changes prompt:\n${prompt}`)
+  console.log(`File changes prompt:\n${logPrompt}`)
   console.log(`--------------------------------\n\n\n\n\n`)
 
   try {

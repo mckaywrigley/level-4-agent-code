@@ -119,6 +119,8 @@ You only generate unit tests in the __tests__/unit directory.
 IMPORTANT: 
 - If the code references React/JSX, ensure any test files are named ".test.tsx" — never ".test.ts".
 - Do not produce duplicates where you have both .test.ts and .test.tsx for the same component.
+- Always import '@testing-library/jest-dom' for DOM matchers
+- Always import '@testing-library/react' for React testing utilities
 
 Return only valid JSON matching this structure:
 {

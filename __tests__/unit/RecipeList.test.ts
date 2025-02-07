@@ -4,24 +4,26 @@ import '@testing-library/jest-dom';
 import RecipeList from '@/app/recipes/_components/recipe-list';
 
 describe('RecipeList Component', () => {
-  it('displays a message when there are no recipes', () => {
+  it('renders a message when no recipes are provided', () => {
     render(<RecipeList initialData={[]} />);
-    expect(screen.getByText(/No recipes found./i)).toBeInTheDocument();
+    expect(screen.getByText('No recipes found.')).toBeInTheDocument();
   });
 
   it('renders a list of recipes when data is provided', () => {
-    const recipes = [
-      { name: 'Pasta', description: 'Tasty pasta recipe' },
-      { name: 'Salad', description: 'Fresh and healthy' }
+    const sampleRecipes = [
+      { name: 'Pizza', description: 'Delicious cheese pizza' },
+      { name: 'Pasta', description: 'Creamy Alfredo pasta' }
     ];
-    render(<RecipeList initialData={recipes} />);
+    render(<RecipeList initialData={sampleRecipes} />);
 
-    // Check for list title
-    expect(screen.getByText(/Recipe List/i)).toBeInTheDocument();
+    // Check for list heading
+    expect(screen.getByText('Recipe List')).toBeInTheDocument();
 
-    recipes.forEach(recipe => {
+    // Check for each recipe name and description
+    sampleRecipes.forEach(recipe => {
       expect(screen.getByText(recipe.name)).toBeInTheDocument();
       expect(screen.getByText(recipe.description)).toBeInTheDocument();
     });
   });
-});
+
+  it('renders 

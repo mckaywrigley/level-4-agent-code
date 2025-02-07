@@ -8,9 +8,9 @@ Now also updated to:
 1) Gather full codebase context for the text-to-feature step (so the LLM sees the entire code).
 2) More robust branch switch logic that fetches from remote and rebases if the branch exists, avoiding push rejections.
 3) Force a rebase from the remote branch again inside 'commitChanges' (just before pushing).
-   This prevents the runner from falling behind if new commits appear on the remote after the branch was first checked out.
+4) **If the branch is brand new (not on remote yet), skip the fetch/rebase steps** and directly do 'git push -u origin HEAD'.
 
-Changes are clearly marked. All doc comments remain.
+All doc comments remain, with the final fix ensuring we never fetch a remote branch that doesn’t exist.
 </ai_context>
 */
 
@@ -82,13 +82,8 @@ Return JSON only, matching this structure:
 }
 `
 
-  // Log prompt without codebase listing for readability
-  const promptWithoutCodebase = prompt.replace(
-    codebaseListing,
-    "[codebase listing omitted]"
-  )
   console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`File changes prompt:\n${promptWithoutCodebase}`)
+  console.log(`File changes prompt:\n${prompt}`)
   console.log(`--------------------------------\n\n\n\n\n`)
 
   try {
@@ -168,9 +163,10 @@ export function switchToFeatureBranch(branchName: string) {
 
 /**
  * commitChanges:
- * - Adds, commits with a message, then merges remote changes again, then pushes.
- * - This ensures we don't fall behind if the remote branch was updated
- *   between steps in the same workflow run.
+ * - Adds, commits with a message, then either:
+ *   1) If the branch is already on remote, fetch + rebase + push.
+ *   2) If not, push with '-u' to create it on remote for the first time,
+ *      skipping the fetch step that would fail if it doesn't exist yet.
  */
 export function commitChanges(message: string) {
   try {
@@ -178,17 +174,39 @@ export function commitChanges(message: string) {
     execSync(`git add .`, { stdio: "inherit" })
     execSync(`git commit -m "${message}"`, { stdio: "inherit" })
 
-    // **New step**: fetch + rebase from remote before pushing
-    //   ensures we incorporate any remote commits that might've appeared
-    //   since we last rebased in switchToFeatureBranch.
+    // Get the current local branch name
     const currentBranch = execSync(`git branch --show-current`, {
       encoding: "utf-8"
     }).trim()
-    execSync(`git fetch origin ${currentBranch}`, { stdio: "inherit" })
-    execSync(`git pull --rebase origin ${currentBranch}`, { stdio: "inherit" })
 
-    // Now push after rebasing
-    execSync(`git push origin HEAD`, { stdio: "inherit" })
+    // Check if this branch exists on remote
+    // (We parse the output of 'git ls-remote --heads origin <branch>')
+    let branchExistsOnRemote = false
+    try {
+      const lsRemoteOut = execSync(
+        `git ls-remote --heads origin ${currentBranch}`,
+        { encoding: "utf-8" }
+      )
+      if (lsRemoteOut && lsRemoteOut.length > 0) {
+        branchExistsOnRemote = true
+      }
+    } catch {
+      // If ls-remote throws, it means there's no remote branch
+      branchExistsOnRemote = false
+    }
+
+    if (branchExistsOnRemote) {
+      // If the remote branch exists, fetch + rebase + push
+      execSync(`git fetch origin ${currentBranch}`, { stdio: "inherit" })
+      execSync(`git pull --rebase origin ${currentBranch}`, {
+        stdio: "inherit"
+      })
+      execSync(`git push origin HEAD`, { stdio: "inherit" })
+    } else {
+      // If the remote branch is brand new, just create it
+      // '-u' sets the upstream so future pushes know where to go
+      execSync(`git push -u origin HEAD`, { stdio: "inherit" })
+    }
   } catch (error) {
     console.error("Error in commitChanges:", error)
     throw error

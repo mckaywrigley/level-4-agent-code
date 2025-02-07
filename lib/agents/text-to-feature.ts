@@ -157,9 +157,8 @@ export async function ensureDraftPullRequest(
     repo,
     head: branchName,
     base: "main",
-    title: `Draft: ${featureRequest}`,
-    body: `This is an AI-generated draft PR for feature: "${featureRequest}".`,
-    draft: true // Mark as draft so we can finalize it later
+    title: `Agent: ${featureRequest}`,
+    body: `This is an AI-generated PR for feature: "${featureRequest}".`
   })
 
   return pr.number

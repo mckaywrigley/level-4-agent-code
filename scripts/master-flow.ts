@@ -129,8 +129,7 @@ async function main() {
     await octokit.pulls.update({
       owner,
       repo,
-      pull_number: draftPRNumber,
-      draft: false
+      pull_number: draftPRNumber
     })
     console.log(`PR #${draftPRNumber} is now ready for review!`)
   } catch (err) {

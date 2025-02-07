@@ -1,48 +1,43 @@
-import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
-import RecipeForm from "@/app/recipes/_components/recipe-form";
-import "@testing-library/jest-dom";
+import React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import RecipeForm from '@/app/recipes/_components/recipe-form';
+import '@testing-library/jest-dom';
 
-describe("RecipeForm Component", () => {
-  it("renders the form with all required inputs and button", () => {
-    const mockOnAddRecipe = jest.fn();
-    render(<RecipeForm onAddRecipe={mockOnAddRecipe} />);
+describe('RecipeForm Component', () => {
+  it('renders form inputs and a submit button', () => {
+    const dummyFn = jest.fn();
+    render(<RecipeForm onAddRecipe={dummyFn} />);
 
-    const titleInput = screen.getByPlaceholderText("Enter recipe title");
-    const ingredientsInput = screen.getByPlaceholderText("List ingredients here");
-    const instructionsInput = screen.getByPlaceholderText("Describe preparation steps");
-    const addButton = screen.getByRole("button", { name: "Add Recipe" });
-
-    expect(titleInput).toBeInTheDocument();
-    expect(ingredientsInput).toBeInTheDocument();
-    expect(instructionsInput).toBeInTheDocument();
-    expect(addButton).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Enter recipe title')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('List ingredients here')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Describe preparation steps')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add Recipe/i })).toBeInTheDocument();
   });
 
-  it("calls onAddRecipe with the correct data and resets the form on submit", () => {
-    const mockOnAddRecipe = jest.fn();
-    render(<RecipeForm onAddRecipe={mockOnAddRecipe} />);
+  it('calls onAddRecipe with proper data and clears the form', () => {
+    const onAddRecipeMock = jest.fn();
+    render(<RecipeForm onAddRecipe={onAddRecipeMock} />);
 
-    const titleInput = screen.getByPlaceholderText("Enter recipe title");
-    const ingredientsInput = screen.getByPlaceholderText("List ingredients here");
-    const instructionsInput = screen.getByPlaceholderText("Describe preparation steps");
-    const addButton = screen.getByRole("button", { name: "Add Recipe" });
+    const titleInput = screen.getByPlaceholderText('Enter recipe title');
+    const ingredientsInput = screen.getByPlaceholderText('List ingredients here');
+    const instructionsInput = screen.getByPlaceholderText('Describe preparation steps');
+    const submitButton = screen.getByRole('button', { name: /Add Recipe/i });
 
-    fireEvent.change(titleInput, { target: { value: "Test Recipe" } });
-    fireEvent.change(ingredientsInput, { target: { value: "Eggs, Flour" } });
-    fireEvent.change(instructionsInput, { target: { value: "Mix and bake." } });
+    fireEvent.change(titleInput, { target: { value: 'Spaghetti Bolognese' } });
+    fireEvent.change(ingredientsInput, { target: { value: 'Spaghetti, Meat, Tomato Sauce' } });
+    fireEvent.change(instructionsInput, { target: { value: 'Cook pasta and simmer sauce with meat' } });
 
-    fireEvent.click(addButton);
+    fireEvent.click(submitButton);
 
-    expect(mockOnAddRecipe).toHaveBeenCalledWith({
-      title: "Test Recipe",
-      ingredients: "Eggs, Flour",
-      instructions: "Mix and bake."
+    expect(onAddRecipeMock).toHaveBeenCalledWith({
+      title: 'Spaghetti Bolognese',
+      ingredients: 'Spaghetti, Meat, Tomato Sauce',
+      instructions: 'Cook pasta and simmer sauce with meat'
     });
 
-    // Check that the form inputs are reset
-    expect(titleInput.value).toBe("");
-    expect(ingredientsInput.value).toBe("");
-    expect(instructionsInput.value).toBe("");
+    // Ensure fields are cleared after submission
+    expect(titleInput.value).toBe('');
+    expect(ingredientsInput.value).toBe('');
+    expect(instructionsInput.value).toBe('');
   });
 });

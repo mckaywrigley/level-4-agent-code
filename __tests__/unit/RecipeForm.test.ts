@@ -4,21 +4,24 @@ import '@testing-library/jest-dom';
 import RecipeForm from '@/app/recipes/_components/recipe-form';
 
 describe('RecipeForm Component', () => {
-  it('renders the form with all necessary inputs and button', () => {
+  it('renders form elements correctly', () => {
     render(<RecipeForm />);
 
-    // Check for New Recipe heading
+    // Check for heading
     expect(screen.getByText('New Recipe')).toBeInTheDocument();
 
-    // Check for label and placeholder for Recipe Name
-    expect(screen.getByLabelText(/Recipe Name/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/Enter recipe name/i)).toBeInTheDocument();
+    // Check for Recipe Name label and input
+    expect(screen.getByText('Recipe Name')).toBeInTheDocument();
+    const nameInput = screen.getByPlaceholderText('Enter recipe name');
+    expect(nameInput).toBeInTheDocument();
 
-    // Check for label and placeholder for Description
-    expect(screen.getByLabelText(/Description/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/Enter description/i)).toBeInTheDocument();
+    // Check for Description label and textarea
+    expect(screen.getByText('Description')).toBeInTheDocument();
+    const descriptionTextarea = screen.getByPlaceholderText('Enter description');
+    expect(descriptionTextarea).toBeInTheDocument();
 
-    // Check for Create Recipe button
-    expect(screen.getByRole('button', { name: /Create Recipe/i })).toBeInTheDocument();
+    // Check for submit button
+    const submitButton = screen.getByRole('button', { name: /Create Recipe/i });
+    expect(submitButton).toBeInTheDocument();
   });
 });

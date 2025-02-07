@@ -59,6 +59,9 @@ Given the existing modifications above, propose any additional or updated files 
   {"file":"path/to/whatever.ts","content":"..."}
 ]
 `
+  console.log(`\n\n\n\n\n--------------------------------`)
+  console.log(`File changes prompt:\n${prompt}`)
+  console.log(`--------------------------------\n\n\n\n\n`)
 
   try {
     const result = await generateObject({
@@ -68,6 +71,11 @@ Given the existing modifications above, propose any additional or updated files 
       schemaDescription: "An array of file changes",
       prompt
     })
+    console.log(`\n\n\n\n\n--------------------------------`)
+    console.log(
+      `File changes result:\n${JSON.stringify(result.object, null, 2)}`
+    )
+    console.log(`--------------------------------\n\n\n\n\n`)
     return result.object
   } catch {
     return []

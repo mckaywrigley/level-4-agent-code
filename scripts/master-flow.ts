@@ -61,10 +61,14 @@ async function main() {
     branchName,
     featureRequest
   )
+  console.log(`\n\n\n\n\n--------------------------------`)
   console.log(`Draft PR #${draftPRNumber} created/found.`)
+  console.log(`--------------------------------\n\n\n\n\n`)
 
   // 3) Plan out steps using the Planner
+  console.log(`\n\n\n\n\n--------------------------------`)
   console.log("Planning steps for:", featureRequest)
+  console.log(`--------------------------------\n\n\n\n\n`)
   const steps = await runPlanner(featureRequest)
 
   // 4) We'll keep track of all changes made so far
@@ -78,10 +82,12 @@ async function main() {
     // 5a) Generate changes for this step, passing in the "accumulatedChanges"
     //     so the LLM can see what's already changed.
     const newChanges = await getFileChangesForStep(step, accumulatedChanges)
+    console.log(`\n\n\n\n\n--------------------------------`)
     console.log(
       "Proposed file changes:",
       newChanges.map(c => c.file)
     )
+    console.log(`--------------------------------\n\n\n\n\n`)
 
     // 5b) Apply them locally & commit
     applyFileChanges(newChanges)

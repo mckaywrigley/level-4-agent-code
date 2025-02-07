@@ -48,6 +48,9 @@ Break it down into a concise ordered list of steps to implement. Return valid JS
   {"stepName":"Step2","stepDescription":"1-2 sentences describing the step","stepPlan":"Plan for the step"}
 ]
 `
+  console.log(`\n\n\n\n\n--------------------------------`)
+  console.log(`Planner prompt:\n${prompt}`)
+  console.log(`--------------------------------\n\n\n\n\n`)
 
   try {
     // "generateObject" from 'ai' library attempts to parse the LLM output
@@ -59,6 +62,9 @@ Break it down into a concise ordered list of steps to implement. Return valid JS
       schemaDescription: "Plan out steps as an array",
       prompt
     })
+    console.log(`\n\n\n\n\n--------------------------------`)
+    console.log(`Planner result:\n${JSON.stringify(result.object, null, 2)}`)
+    console.log(`--------------------------------\n\n\n\n\n`)
     return result.object
   } catch {
     // If there's an error (either from LLM or JSON parse), we default

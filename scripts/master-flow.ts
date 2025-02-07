@@ -9,6 +9,7 @@ Finally, after all steps pass, we run one last check and then open the PR fully.
 </ai_context>
 */
 
+import { runFlowOnLatestCommit } from "@/lib/agents/commit-step-flow"
 import { runPlanner } from "@/lib/agents/planner"
 import { runFlowOnPR } from "@/lib/agents/pr-step-flow"
 import {
@@ -97,18 +98,23 @@ async function main() {
     }
 
     // 5d) Run the full PR-based AI flow on the new commit
-    const success = await runFlowOnPR(octokit, owner, repo, draftPRNumber)
+    const success = await runFlowOnLatestCommit(
+      octokit,
+      owner,
+      repo,
+      draftPRNumber
+    )
     if (!success) {
-      console.error(`Step ${i + 1} failed test flow. Aborting.`)
+      console.error(`Tests failed on step ${i + 1}`)
       process.exit(1)
     }
   }
 
   // 6) After all steps pass, do a final check
-  console.log("\nAll steps done. Running final AI flow check...\n")
+  console.log("All steps done. Doing final full PR review.")
   const finalSuccess = await runFlowOnPR(octokit, owner, repo, draftPRNumber)
   if (!finalSuccess) {
-    console.error("Final PR-based flow failed.")
+    console.error("Final full review failed.")
     process.exit(1)
   }
 

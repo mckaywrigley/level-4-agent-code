@@ -3,6 +3,16 @@
 Extended with a new helper "ensurePullRequest" that either finds or creates
 a PR from branch -> main. This is so each commit can run the "review/test"
 logic on that open PR.
+
+Now also updated to:
+1) Gather full codebase context for the text-to-feature step (so the LLM sees the entire code).
+2) Rebase/pull if the feature branch already exists, avoiding push rejections.
+3) Maintain doc comments as requested.
+
+Changes:
+- Added 'gatherFullCodebaseContextForFeature' to replicate the logic from the planner.
+- Updated 'getFileChangesForStep' to include full codebase context in the prompt.
+- Modified 'switchToFeatureBranch' to pull/rebase if branch already exists.
 </ai_context>
 */
 
@@ -35,6 +45,7 @@ const changesSchema = z.object({
 /**
  * getFileChangesForStep:
  * - Calls our LLM with a prompt describing the single step to implement.
+ * - Now also includes the entire codebase context (similar to planner).
  * - The LLM returns a JSON array of file changes that need to be applied.
  */
 export async function getFileChangesForStep(
@@ -43,27 +54,36 @@ export async function getFileChangesForStep(
 ): Promise<FileChange[]> {
   const model = getLLMModel()
 
-  // We'll present the prior changes so the LLM can see them
+  // We'll include prior changes in case the LLM needs to see them
   const priorChangesSnippet = accumulatedChanges
     .map(c => `File: ${c.file}\n---\n${c.content}`)
     .join("\n\n")
 
+  // Gather the entire codebase (like the planner does), minus large or excluded files
+  const codebaseListing = gatherFullCodebaseContextForFeature(process.cwd())
+
   const prompt = `
-Below is a list of prior changes that have been made in earlier steps:
+You are an AI coding assistant. You have two contexts:
+
+1) The entire current codebase (excluding huge/unnecessary files):
+${codebaseListing}
+
+2) A list of prior changes that have been made in earlier steps of this feature:
 ${priorChangesSnippet}
 
-Now we have a new step:
+Now we have a new step to implement:
 Name: ${step.stepName}
 Description: ${step.stepDescription}
 Plan: ${step.stepPlan}
 
-Given the existing modifications above, propose any additional or updated files needed for this step. Return JSON only:
+Return JSON only, matching this structure:
 {
   "changedFiles": [
-    {"file":"path/to/whatever.ts","content":"..."}
+    {"file":"path/to/file.ts","content":"(updated file content)"}
   ]
 }
 `
+
   console.log(`\n\n\n\n\n--------------------------------`)
   console.log(`File changes prompt:\n${prompt}`)
   console.log(`--------------------------------\n\n\n\n\n`)
@@ -103,6 +123,8 @@ export function applyFileChanges(changes: FileChange[]) {
 /**
  * switchToFeatureBranch:
  * - Checks out main, pulls latest, then creates or switches to branchName.
+ * - If the branch already exists locally, we also pull/rebase from the remote
+ *   to avoid push rejections (like "Updates were rejected because the remote contains work...").
  */
 export function switchToFeatureBranch(branchName: string) {
   try {
@@ -116,15 +138,23 @@ export function switchToFeatureBranch(branchName: string) {
     // ignore
   }
   try {
+    // Create a new branch
     execSync(`git checkout -b ${branchName}`, { stdio: "inherit" })
   } catch {
+    // If creation fails, we assume branch already exists:
     execSync(`git checkout ${branchName}`, { stdio: "inherit" })
+    // Attempt to pull/rebase from remote to avoid push conflicts
+    try {
+      execSync(`git pull origin ${branchName} --rebase`, { stdio: "inherit" })
+    } catch {
+      // ignore
+    }
   }
 }
 
 /**
  * commitChanges:
- * - Adds, commits with a message, pushes to origin HEAD
+ * - Adds, commits with a message, pushes to origin HEAD.
  */
 export function commitChanges(message: string) {
   execSync(`git add .`, { stdio: "inherit" })
@@ -168,4 +198,70 @@ export async function ensurePullRequest(
   })
 
   return pr.number
+}
+
+/**
+ * gatherFullCodebaseContextForFeature:
+ * - Recursively scans the local filesystem starting from `baseDir`.
+ * - Excludes large or irrelevant files to keep prompt size manageable.
+ * - Returns a single string that lists all included files with contents.
+ *
+ * Note: This is nearly identical to the gather logic in planner.ts,
+ * but we replicate it here for the "text-to-feature" steps to ensure
+ * the LLM can see the broader codebase when implementing each step.
+ */
+function gatherFullCodebaseContextForFeature(baseDir: string): string {
+  const excludeDirs = [
+    ".git",
+    "node_modules",
+    ".next",
+    "dist",
+    "build",
+    ".vercel"
+  ]
+  const excludeFiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]
+
+  let output: string[] = []
+
+  function recurse(currentPath: string) {
+    const stat = fs.statSync(currentPath)
+    if (stat.isDirectory()) {
+      const dirName = path.basename(currentPath)
+      if (excludeDirs.includes(dirName)) {
+        return // skip this entire directory
+      }
+
+      // read contents
+      const entries = fs.readdirSync(currentPath)
+      for (const entry of entries) {
+        recurse(path.join(currentPath, entry))
+      }
+    } else {
+      // it's a file
+      const fileName = path.basename(currentPath)
+      if (excludeFiles.includes(fileName)) {
+        return // skip lockfiles, etc.
+      }
+
+      // read content
+      let content = fs.readFileSync(currentPath, "utf-8")
+
+      // check character length limit
+      if (content.length > 20000) {
+        return // skip large files
+      }
+
+      // build snippet: "File: path/from/cwd\n---\n(content)"
+      // We'll make the path relative to the baseDir so it's more readable
+      const relPath = path.relative(baseDir, currentPath)
+
+      const snippet = `File: ${relPath}\n---\n${content}`
+      output.push(snippet)
+    }
+  }
+
+  recurse(baseDir)
+
+  // Join them with blank lines
+  return output.join("\n\n")
 }

@@ -53,7 +53,7 @@ export async function runPlanner(featureRequest: string): Promise<Step[]> {
   // 1) Gather codebase context (excluding large or lock files)
   const codebaseListing = gatherCodebaseContextForPlanner(process.cwd())
   console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`Codebase listing:\n~${codebaseListing.length / 4} tokens`)
+  console.log(`Codebase Length:\n~${codebaseListing.length / 4} tokens`)
   console.log(`--------------------------------\n\n\n\n\n`)
 
   // 2) Prepare the model and the final prompt
@@ -78,10 +78,14 @@ Now, break the user's request into a concise ordered list of steps to implement.
 
 Be sure to incorporate knowledge of the existing code if relevant.
 `
-
-  console.log(
-    `\n\n--- Planner Prompt Start ---\n${prompt}\n--- Planner Prompt End ---\n`
+  console.log(`\n\n\n\n\n--------------------------------`)
+  // Log prompt without the long codebase listing
+  const promptWithoutCodebase = prompt.replace(
+    /Below is the codebase context[\s\S]*?Now, break/,
+    "Now, break"
   )
+  console.log(`Planner Prompt:\n${promptWithoutCodebase}`)
+  console.log(`--------------------------------\n\n\n\n\n`)
 
   try {
     // "generateObject" from 'ai' library attempts to parse the LLM output
@@ -94,9 +98,11 @@ Be sure to incorporate knowledge of the existing code if relevant.
       prompt
     })
 
+    console.log(`\n\n\n\n\n--------------------------------`)
     console.log(
-      `\n\n--- Planner LLM Result ---\n${JSON.stringify(result.object, null, 2)}\n--- End ---\n`
+      `\n\n---   Planner LLM Result ---\n${JSON.stringify(result.object, null, 2)}\n--- End ---\n`
     )
+    console.log(`--------------------------------\n\n\n\n\n`)
     return result.object
   } catch {
     // If there's an error (either from LLM or JSON parse), we default

@@ -4,32 +4,41 @@ import '@testing-library/jest-dom';
 import InvoiceEstimator from '@/app/invoice/_components/invoice-estimator';
 
 describe('InvoiceEstimator Component', () => {
-  it('renders the heading correctly', () => {
+  it('renders correctly with initial state', () => {
     render(<InvoiceEstimator />);
-    const headingElement = screen.getByText('Invoice Estimator');
-    expect(headingElement).toBeInTheDocument();
+    
+    // Check if the heading exists
+    expect(screen.getByText('Invoice Estimator')).toBeInTheDocument();
+
+    // Check the initial total amount is $0.00
+    expect(screen.getByText(/Total Amount:/)).toHaveTextContent('$0.00');
+
+    // Check that input fields are present
+    expect(screen.getByPlaceholderText('Enter item description')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('0')).toBeInTheDocument();
   });
 
-  it('updates the description input value', () => {
+  it('calculates total correctly when inputs are provided', () => {
     render(<InvoiceEstimator />);
+    
+    // Get input fields by their placeholder texts
     const descriptionInput = screen.getByPlaceholderText('Enter item description');
+    const numberInputs = screen.getAllByPlaceholderText('0');
+    
+    // Assume the first number input is for quantity and second for unit price
+    const quantityInput = numberInputs[0];
+    const unitPriceInput = numberInputs[1];
+
+    // Update the input fields
     fireEvent.change(descriptionInput, { target: { value: 'Test Item' } });
-    expect(descriptionInput).toHaveValue('Test Item');
-  });
-
-  it('calculates total correctly when quantity and unit price are provided', () => {
-    render(<InvoiceEstimator />);
-    const quantityInput = screen.getByPlaceholderText('0');
-    const unitPriceInput = screen.getAllByPlaceholderText('0')[1];
-    const calculateButton = screen.getByRole('button', { name: 'Calculate Total' });
-
-    // Set quantity to 3 and unit price to 10
-    fireEvent.change(quantityInput, { target: { value: '3' } });
+    fireEvent.change(quantityInput, { target: { value: '5' } });
     fireEvent.change(unitPriceInput, { target: { value: '10' } });
-
+    
+    // Click the Calculate Total button
+    const calculateButton = screen.getByRole('button', { name: /Calculate Total/i });
     fireEvent.click(calculateButton);
 
-    const totalElement = screen.getByText(/Total Amount:/i);
-    expect(totalElement).toHaveTextContent('$30.00');
+    // Check that the total is calculated correctly ($50.00)
+    expect(screen.getByText(/Total Amount:/)).toHaveTextContent('$50.00');
   });
 });

@@ -96,7 +96,11 @@ Be sure to incorporate knowledge of the existing code if relevant.
     )
     console.log(`--------------------------------\n\n\n\n\n`)
     return result.object
-  } catch {
+  } catch (error: any) {
+    console.log(`\n\n\n\n\n--------------------------------`)
+    console.log(`Error in planner:`)
+    console.log(error)
+    console.log(`--------------------------------\n\n\n\n\n`)
     // If there's an error (either from LLM or JSON parse), we default
     // to a single-step "PlanError".
     return [

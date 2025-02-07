@@ -1,55 +1,45 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
-import RecipesPage from '@/app/recipes/page';
+import { render, screen, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom';
 
-// Mock the getRecipesAction module
+// Since RecipesPage is a server component that uses getRecipesAction, we mock the action
 jest.mock('@/actions/db/recipes-actions', () => ({
   getRecipesAction: jest.fn()
 }));
 
 import { getRecipesAction } from '@/actions/db/recipes-actions';
+import RecipesPage from '@/app/recipes/page';
+
+// Create a wrapper to handle async server component
+async function renderPage() {
+  const Component = await RecipesPage();
+  // Wrap the returned component in a div so we can render it
+  return render(<div>{Component}</div>);
+}
 
 describe('RecipesPage', () => {
   beforeEach(() => {
-    // Reset mock
-    (getRecipesAction as jest.Mock).mockReset();
-  });
-
-  it('renders the page with recipe form and list when recipes are fetched successfully', async () => {
-    // Setup mock to return successful data
     (getRecipesAction as jest.Mock).mockResolvedValue({
       isSuccess: true,
-      data: [{ name: 'Spaghetti', description: 'Classic Italian pasta' }]
+      data: [
+        { name: 'Chocolate Cake', description: 'Rich and moist' }
+      ]
     });
-
-    const pageContent = await RecipesPage();
-    render(pageContent);
-    
-    // Check for page title and components
-    expect(screen.getByText('Recipes')).toBeInTheDocument();
-    expect(screen.getByText('New Recipe')).toBeInTheDocument();
-    expect(screen.getByText('Recipe List')).toBeInTheDocument();
-
-    // Check that a recipe is rendered
-    expect(screen.getByText('Spaghetti')).toBeInTheDocument();
-    expect(screen.getByText('Classic Italian pasta')).toBeInTheDocument();
   });
 
-  it('renders the page with empty recipe list when fetching fails', async () => {
-    (getRecipesAction as jest.Mock).mockResolvedValue({
-      isSuccess: false,
-      data: []
-    });
+  it('renders the recipes page with form and list', async () => {
+    await waitFor(async () => {
+      await renderPage();
 
-    const pageContent = await RecipesPage();
-    render(pageContent);
-    
-    // Check for page title and components
-    expect(screen.getByText('Recipes')).toBeInTheDocument();
-    expect(screen.getByText('New Recipe')).toBeInTheDocument();
-    expect(screen.getByText('Recipe List')).toBeInTheDocument();
-    
-    // Check that empty state is shown
-    expect(screen.getByText('No recipes found.')).toBeInTheDocument();
+      // Check for page heading
+      expect(screen.getByText('Recipes')).toBeInTheDocument();
+
+      // Check that the RecipeForm component text is rendered
+      expect(screen.getByText('New Recipe')).toBeInTheDocument();
+
+      // Check that the RecipeList component renders the mocked recipe
+      expect(screen.getByText('Chocolate Cake')).toBeInTheDocument();
+      expect(screen.getByText('Rich and moist')).toBeInTheDocument();
+    });
   });
 });

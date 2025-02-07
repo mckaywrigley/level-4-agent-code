@@ -1,12 +1,14 @@
 /*
 <ai_context>
-The "Text-to-Feature" agent takes a single step description and the current repo
-state, then returns a list of file changes (full file contents). We then apply
-those changes locally, and commit/push them to the new feature branch.
+Extended with a new helper "ensureDraftPullRequest" that either finds or creates
+a draft PR from branch -> main. This is so each commit can run the "review/test"
+logic on that open PR.
 </ai_context>
 */
 
+import { FileChange } from "@/types/file-types"
 import { Step } from "@/types/step-types"
+import { Octokit } from "@octokit/rest"
 import { generateObject } from "ai"
 import { execSync } from "child_process"
 import fs from "fs"
@@ -33,26 +35,29 @@ const changesSchema = z.array(
  * - The LLM returns a JSON array of file changes that need to be applied.
  */
 export async function getFileChangesForStep(
-  step: Step
-): Promise<{ file: string; content: string }[]> {
+  step: Step,
+  accumulatedChanges: FileChange[]
+): Promise<FileChange[]> {
   const model = getLLMModel()
 
-  // The LLM is expected to return valid JSON with a "file" and "content"
-  // for each changed file.
+  // We’ll present the prior changes so the LLM can see them
+  const priorChangesSnippet = accumulatedChanges
+    .map(c => `File: ${c.file}\n---\n${c.content}`)
+    .join("\n\n")
+
   const prompt = `
-You are given a step for a coding task:
-Step name: "${step.stepName}"
-Step description: "${step.stepDescription}"
-Step plan: "${step.stepPlan}"
+Below is a list of prior changes that have been made in earlier steps:
+${priorChangesSnippet}
 
-Output an array of objects describing the new or updated files. Return valid JSON only, matching:
+Now we have a new step:
+Name: ${step.stepName}
+Description: ${step.stepDescription}
+Plan: ${step.stepPlan}
+
+Given the existing modifications above, propose any additional or updated files needed for this step. Return JSON only:
 [
-  {"file":"path/to/file.tsx","content":"(full file content here)"},
-  ...
+  {"file":"path/to/whatever.ts","content":"..."}
 ]
-
-Include the complete file content that should exist after this step.
-If the file already exists, provide its updated content. If it's new, provide new content.
 `
 
   try {
@@ -65,15 +70,13 @@ If the file already exists, provide its updated content. If it's new, provide ne
     })
     return result.object
   } catch {
-    // If we fail to parse the LLM's response, we return an empty array (no changes)
     return []
   }
 }
 
 /**
  * applyFileChanges:
- * - Takes an array of { file, content } objects, and writes them to the local filesystem.
- * - If directories in the path don't exist, it creates them recursively.
+ * - Writes each { file, content } to disk, creating dirs as necessary.
  */
 export function applyFileChanges(changes: { file: string; content: string }[]) {
   for (const change of changes) {
@@ -85,36 +88,71 @@ export function applyFileChanges(changes: { file: string; content: string }[]) {
 
 /**
  * switchToFeatureBranch:
- * - We first checkout main (pulling latest changes).
- * - Then we create a new branch by the name "branchName" if it doesn't exist,
- *   or switch to it if it does.
+ * - Checks out main, pulls latest, then creates or switches to branchName.
  */
 export function switchToFeatureBranch(branchName: string) {
   try {
     execSync(`git checkout main`, { stdio: "inherit" })
   } catch {
-    // ignore any error
+    // ignore
   }
   try {
     execSync(`git pull origin main`, { stdio: "inherit" })
   } catch {
-    // ignore any error
+    // ignore
   }
   try {
     execSync(`git checkout -b ${branchName}`, { stdio: "inherit" })
   } catch {
-    // If that fails, presumably the branch already exists, so we just switch to it
     execSync(`git checkout ${branchName}`, { stdio: "inherit" })
   }
 }
 
 /**
  * commitChanges:
- * - Adds all changes, commits them with the provided message, and pushes to origin HEAD.
- * - This ensures our new code is reflected in the remote GitHub repository under the feature branch.
+ * - Adds, commits with a message, pushes to origin HEAD
  */
 export function commitChanges(message: string) {
   execSync(`git add .`, { stdio: "inherit" })
   execSync(`git commit -m "${message}"`, { stdio: "inherit" })
   execSync(`git push origin HEAD`, { stdio: "inherit" })
+}
+
+/**
+ * ensureDraftPullRequest:
+ * - Checks if there's already a PR from "branchName" to main.
+ * - If none, creates a new PR in "draft" mode with a basic title/body.
+ * - Returns the PR number (we need that to post code review & test generation comments).
+ */
+export async function ensureDraftPullRequest(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  branchName: string,
+  featureRequest: string
+): Promise<number> {
+  // 1) See if a PR from this branch → main is already open
+  const existing = await octokit.pulls.list({
+    owner,
+    repo,
+    head: `${owner}:${branchName}`,
+    state: "open"
+  })
+  if (existing.data.length > 0) {
+    // If we found an open PR from the same branch, just return its number
+    return existing.data[0].number
+  }
+
+  // 2) Create a new draft PR
+  const { data: pr } = await octokit.pulls.create({
+    owner,
+    repo,
+    head: branchName,
+    base: "main",
+    title: `Draft: ${featureRequest}`,
+    body: `This is an AI-generated draft PR for feature: "${featureRequest}".`,
+    draft: true // Mark as draft so we can finalize it later
+  })
+
+  return pr.number
 }

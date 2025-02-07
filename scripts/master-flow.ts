@@ -1,22 +1,25 @@
 /*
 <ai_context>
 This script orchestrates the AI pipeline for a user-provided feature request.
-It uses:
-  - Planner Agent -> to break down the request into steps.
-  - Text-to-Feature Agent -> to generate and apply file changes for each step.
-  - runLocalFlow -> to test after each step.
-Finally, if all steps pass, we do a final test run and open a Pull Request.
+Now, after each step's code changes are committed, we run the "pr-based AI flow"
+logic on a *draft PR*. This ensures each step gets an AI code review + test generation
++ iterative test fixing, just like we previously did on normal pull requests.
+
+Finally, after all steps pass, we run one last check and then open the PR fully.
 </ai_context>
 */
 
-import { runLocalFlow } from "@/lib/agents/flow-runner"
 import { runPlanner } from "@/lib/agents/planner"
+import { runFlowOnPR } from "@/lib/agents/pr-step-flow"
 import {
   applyFileChanges,
   commitChanges,
+  ensureDraftPullRequest,
   getFileChangesForStep,
   switchToFeatureBranch
 } from "@/lib/agents/text-to-feature"
+import { FileChange } from "@/types/file-types"
+import { Step } from "@/types/step-types"
 import { Octokit } from "@octokit/rest"
 
 async function main() {
@@ -26,94 +29,105 @@ async function main() {
     process.exit(1)
   }
 
-  // Generate a sanitized branch name from the user’s request
+  const githubToken = process.env.GITHUB_TOKEN
+  if (!githubToken) {
+    console.error("No GITHUB_TOKEN found. Cannot proceed.")
+    process.exit(1)
+  }
+
+  const repoStr = process.env.GITHUB_REPOSITORY
+  if (!repoStr) {
+    console.error("No GITHUB_REPOSITORY found. Cannot proceed.")
+    process.exit(1)
+  }
+
+  const [owner, repo] = repoStr.split("/")
+  const octokit = new Octokit({ auth: githubToken })
+
+  // 1) Create or switch to the agent/<safeName> branch
   const safeName = featureRequest
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
   const branchName = `agent/${safeName}`
-
-  // Switch to or create the feature branch
   switchToFeatureBranch(branchName)
 
-  // 1) Use the Planner Agent to break down the feature request into steps
-  console.log("Planning steps for feature:", featureRequest)
-  const steps = await runPlanner(featureRequest)
-  console.log("Received plan:", steps)
+  // 2) Create or find a draft PR (so we can do a PR-based AI flow each step)
+  const draftPRNumber = await ensureDraftPullRequest(
+    octokit,
+    owner,
+    repo,
+    branchName,
+    featureRequest
+  )
+  console.log(`Draft PR #${draftPRNumber} created/found.`)
 
-  // 2) Loop over each planned step
+  // 3) Plan out steps using the Planner
+  console.log("Planning steps for:", featureRequest)
+  const steps = await runPlanner(featureRequest)
+
+  // 4) We'll keep track of all changes made so far
+  let accumulatedChanges: FileChange[] = []
+
+  // 5) For each step, do the usual: generate changes, commit, run AI PR flow
   for (let i = 0; i < steps.length; i++) {
-    const step = steps[i]
+    const step: Step = steps[i]
     console.log(`\n--- Step ${i + 1}: ${step.stepName} ---\n`)
 
-    // 2a) Call the "Text-to-Feature" agent to get the file changes
-    const changes = await getFileChangesForStep(step)
+    // 5a) Generate changes for this step, passing in the "accumulatedChanges"
+    //     so the LLM can see what's already changed.
+    const newChanges = await getFileChangesForStep(step, accumulatedChanges)
     console.log(
       "Proposed file changes:",
-      changes.map(c => c.file)
+      newChanges.map(c => c.file)
     )
 
-    // 2b) Apply changes locally
-    applyFileChanges(changes)
-
-    // 2c) Commit and push those changes
+    // 5b) Apply them locally & commit
+    applyFileChanges(newChanges)
     commitChanges(`Step ${i + 1}: ${step.stepName}`)
 
-    // 2d) Run local tests & fix attempts
-    const passed = runLocalFlow()
-    if (!passed) {
-      console.error(`Stopping due to failed tests in step ${i + 1}.`)
+    // 5c) Update our local record of "accumulatedChanges"
+    //     If the LLM re-writes a file that already existed in the array, you may want
+    //     to remove the old version. We do a simple approach below:
+    for (const c of newChanges) {
+      // remove prior entry for the same file
+      accumulatedChanges = accumulatedChanges.filter(ac => ac.file !== c.file)
+      // add the new content
+      accumulatedChanges.push(c)
+    }
+
+    // 5d) Run the full PR-based AI flow on the new commit
+    const success = await runFlowOnPR(octokit, owner, repo, draftPRNumber)
+    if (!success) {
+      console.error(`Step ${i + 1} failed test flow. Aborting.`)
       process.exit(1)
     }
   }
 
-  // 3) After all steps have succeeded, do a final test check
-  console.log(
-    "\nAll steps completed successfully. Running final test check...\n"
-  )
-  const finalPassed = runLocalFlow()
-  if (!finalPassed) {
-    console.error("Final check failed.")
+  // 6) After all steps pass, do a final check
+  console.log("\nAll steps done. Running final AI flow check...\n")
+  const finalSuccess = await runFlowOnPR(octokit, owner, repo, draftPRNumber)
+  if (!finalSuccess) {
+    console.error("Final PR-based flow failed.")
     process.exit(1)
   }
 
-  // 4) If everything passes, we open a PR from agent/<feature-name> → main
+  // 7) Mark PR as ready for review
   try {
-    const githubToken = process.env.GITHUB_TOKEN
-    if (!githubToken) {
-      console.error("No GITHUB_TOKEN found. Skipping PR creation.")
-      process.exit(0)
-    }
-
-    const repoStr = process.env.GITHUB_REPOSITORY
-    if (!repoStr) {
-      console.error("No GITHUB_REPOSITORY found. Skipping PR creation.")
-      process.exit(0)
-    }
-
-    const [owner, repo] = repoStr.split("/")
-    const octokit = new Octokit({ auth: githubToken })
-
-    const title = `Feature: ${featureRequest}`
-    const body = `This PR implements all steps for: "${featureRequest}".`
-
-    const { data: pr } = await octokit.pulls.create({
+    await octokit.pulls.update({
       owner,
       repo,
-      title,
-      body,
-      head: branchName,
-      base: "main"
+      pull_number: draftPRNumber,
+      draft: false
     })
-
-    console.log("Pull Request created:", pr.html_url)
+    console.log(`PR #${draftPRNumber} is now ready for review!`)
   } catch (err) {
-    console.error("Failed to create PR:", err)
-    process.exit(0)
+    console.error("Failed to un-draft the PR:", err)
+    // We won't fail the pipeline here
   }
 }
 
 main().catch(err => {
-  console.error("Error running master-flow:", err)
+  console.error("Error in master-flow:", err)
   process.exit(1)
 })

@@ -1,41 +1,36 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, fireEvent, screen } from '@testing-library/react';
 import RecipeForm from '@/app/recipes/_components/recipe-form';
-import '@testing-library/jest-dom';
+
 
 describe('RecipeForm Component', () => {
-  it('renders form inputs and a submit button', () => {
-    const dummyFn = jest.fn();
-    render(<RecipeForm onAddRecipe={dummyFn} />);
+  it('renders correctly and submits form data', () => {
+    const mockOnAddRecipe = jest.fn();
+    render(<RecipeForm onAddRecipe={mockOnAddRecipe} />);
 
-    expect(screen.getByPlaceholderText('Enter recipe title')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('List ingredients here')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Describe preparation steps')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Add Recipe/i })).toBeInTheDocument();
-  });
-
-  it('calls onAddRecipe with proper data and clears the form', () => {
-    const onAddRecipeMock = jest.fn();
-    render(<RecipeForm onAddRecipe={onAddRecipeMock} />);
-
+    // Get input elements
     const titleInput = screen.getByPlaceholderText('Enter recipe title');
     const ingredientsInput = screen.getByPlaceholderText('List ingredients here');
     const instructionsInput = screen.getByPlaceholderText('Describe preparation steps');
     const submitButton = screen.getByRole('button', { name: /Add Recipe/i });
 
-    fireEvent.change(titleInput, { target: { value: 'Spaghetti Bolognese' } });
-    fireEvent.change(ingredientsInput, { target: { value: 'Spaghetti, Meat, Tomato Sauce' } });
-    fireEvent.change(instructionsInput, { target: { value: 'Cook pasta and simmer sauce with meat' } });
+    // Fill out the form
+    fireEvent.change(titleInput, { target: { value: 'Test Recipe' } });
+    fireEvent.change(ingredientsInput, { target: { value: 'Ingredient1, Ingredient2' } });
+    fireEvent.change(instructionsInput, { target: { value: 'Step 1: Do something' } });
 
+    // Submit the form
     fireEvent.click(submitButton);
 
-    expect(onAddRecipeMock).toHaveBeenCalledWith({
-      title: 'Spaghetti Bolognese',
-      ingredients: 'Spaghetti, Meat, Tomato Sauce',
-      instructions: 'Cook pasta and simmer sauce with meat'
+    // Check if callback was called with the correct data
+    expect(mockOnAddRecipe).toHaveBeenCalledTimes(1);
+    expect(mockOnAddRecipe).toHaveBeenCalledWith({
+      title: 'Test Recipe',
+      ingredients: 'Ingredient1, Ingredient2',
+      instructions: 'Step 1: Do something'
     });
 
-    // Ensure fields are cleared after submission
+    // Ensure fields are reset after form submission
     expect(titleInput.value).toBe('');
     expect(ingredientsInput.value).toBe('');
     expect(instructionsInput.value).toBe('');

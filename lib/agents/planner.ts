@@ -78,14 +78,6 @@ Now, break the user's request into a concise ordered list of steps to implement.
 
 Be sure to incorporate knowledge of the existing code if relevant.
 `
-  console.log(`\n\n\n\n\n--------------------------------`)
-  // Log prompt without the long codebase listing
-  const promptWithoutCodebase = prompt.replace(
-    /Below is the codebase context[\s\S]*?Now, break/,
-    "Now, break"
-  )
-  console.log(`Planner Prompt:\n${promptWithoutCodebase}`)
-  console.log(`--------------------------------\n\n\n\n\n`)
 
   try {
     // "generateObject" from 'ai' library attempts to parse the LLM output

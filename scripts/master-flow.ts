@@ -7,8 +7,9 @@ logic on a PR. This ensures each step gets an AI code review + test generation
 
 Finally, after all steps pass, we run one last check and then open the PR fully.
 
-Now also updated to handle excessively long feature request strings by
-shortening the derived branch name to avoid Git/folder name length errors.
+Now updated to generate branch names based on date/time only,
+instead of the feature request text. This avoids any issues
+with extremely long or invalid names derived from user input.
 </ai_context>
 */
 
@@ -48,25 +49,22 @@ async function main() {
   const [owner, repo] = repoStr.split("/")
   const octokit = new Octokit({ auth: githubToken })
 
-  // 1) Create a shortened/safe name from the feature request
-  //    to avoid "File name too long" Git issues.
-  let safeName = featureRequest
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-") // convert any non-alphanumeric to hyphen
-    .replace(/^-+|-+$/g, "") // remove leading/trailing hyphens
+  // 1) Generate a date/time-based branch name.
+  //    Example format: agent/20231101_1530
+  //    (You can adjust the exact format as you like.)
+  const now = new Date()
+  // Build a simple YYYYMMDD_HHMM string
+  const dateStr =
+    now
+      .toISOString() // e.g. 2023-11-01T15:30:59.123Z
+      .replace(/[-:T]/g, "") // remove special chars so it's 20231101 153059.123Z
+      .slice(0, 8) +
+    "_" +
+    now.toTimeString().slice(0, 5).replace(":", "") // e.g. 20231101_1530
 
-  // Force branch name to a max length (Git typically allows up to 255,
-  // but we keep it shorter for safety). Let's limit to 50 characters.
-  const MAX_BRANCH_LENGTH = 50
-  if (safeName.length > MAX_BRANCH_LENGTH) {
-    safeName = safeName.substring(0, MAX_BRANCH_LENGTH)
-    // remove trailing hyphen if we truncated in the middle of a replacement
-    safeName = safeName.replace(/-+$/, "")
-  }
+  const branchName = `agent/${dateStr}`
 
-  const branchName = `agent/${safeName}`
-
-  // 2) Switch/create the agent/<feature> branch locally
+  // 2) Switch/create the agent/<date/time> branch locally
   switchToFeatureBranch(branchName)
 
   // 3) Plan steps (Planner Agent)

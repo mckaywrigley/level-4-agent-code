@@ -1,15 +1,9 @@
-/**
- * This file orchestrates the overall AI agent flow, from code review to test generation and iterative test fixing.
- *
- * Flow breakdown:
- *  1) We fetch GitHub context data (the PR details, changed files, etc.).
- *  2) We post a placeholder comment and update it with review content (handleReviewAgent).
- *  3) We check if we should generate tests (gatingStep).
- *  4) If yes, we generate new tests or update existing ones (handleTestGeneration).
- *  5) Then we run local tests (runLocalTests).
- *  6) If the tests fail, we attempt a fix up to X iterations (handleTestFix).
- *  7) Ultimately, if the tests pass, we post success. Otherwise, we fail the Action.
- */
+/*
+<ai_context>
+This module previously orchestrated a PR-based flow. Now, we add a "local" run
+option so we can reuse the review/test steps in a non-PR context if needed.
+</ai_context>
+*/
 
 import { Octokit } from "@octokit/rest"
 import * as fs from "fs"
@@ -22,10 +16,15 @@ import { handleTestGeneration } from "./test-proposals"
 import { runLocalTests } from "./test-runner"
 
 /**
- * runFlow is the main entry point called by ai-flow.ts to coordinate everything.
- * - It reads the GitHub event data to ensure it's a pull request event.
- * - Gathers the PR context, calls the code review logic, test gating, test generation, and test fix loops.
- * - In short, this is the "brain" function that ties all submodules together.
+ * runFlow:
+ * - The original function that is triggered by a pull request event.
+ * - This does the entire logic:
+ *   1) Build PR context
+ *   2) Post initial code review
+ *   3) Possibly generate tests
+ *   4) Run tests
+ *   5) If failing, do iterative fix attempts
+ *   6) If eventually passing, succeed; if not, fail the job
  */
 export async function runFlow() {
   const githubToken = process.env.GITHUB_TOKEN
@@ -40,7 +39,7 @@ export async function runFlow() {
     return
   }
 
-  // Reading the event payload to see if it's a pull_request event
+  // Attempt to parse the event data to see if it's a pull_request
   const eventData = JSON.parse(fs.readFileSync(eventPath, "utf8"))
   const pullRequest = eventData.pull_request
   if (!pullRequest) {
@@ -48,7 +47,6 @@ export async function runFlow() {
     return
   }
 
-  // GITHUB_REPOSITORY is typically "owner/repo", e.g. "my-org/my-repo"
   const repoStr = process.env.GITHUB_REPOSITORY
   if (!repoStr) {
     console.error("No GITHUB_REPOSITORY found. Exiting.")
@@ -57,18 +55,16 @@ export async function runFlow() {
 
   const [owner, repo] = repoStr.split("/")
   const prNumber = pullRequest.number
-
-  // We use Octokit to interact with GitHub
   const octokit = new Octokit({ auth: githubToken })
 
-  // Step 1: Build a context object describing the PR (title, changed files, commit messages, etc.)
+  // 1) Build PR context data
   const baseContext = await buildPRContext(octokit, owner, repo, prNumber)
 
-  // Step 2: Create a placeholder "AI Code Review" comment to be updated
+  // 2) Create a "AI Code Review" comment placeholder
   let reviewBody = "### AI Code Review\n_(initializing...)_"
   const reviewCommentId = await createComment(octokit, baseContext, reviewBody)
 
-  // Step 3: Call our code review logic, which updates the placeholder with actual data
+  // 3) Perform the code review step
   const reviewAnalysis: ReviewAnalysis | undefined = await handleReviewAgent(
     octokit,
     baseContext,
@@ -76,14 +72,14 @@ export async function runFlow() {
     reviewBody
   )
 
-  // Step 4: Create a second placeholder comment for "AI Test Generation"
+  // 4) Create an "AI Test Generation" comment placeholder
   let testBody = "### AI Test Generation\n_(initializing...)_"
   const testCommentId = await createComment(octokit, baseContext, testBody)
 
-  // Step 5: Build a test context (includes existing test files, etc.)
+  // 5) Build test context (fetch existing test files)
   const testContext = await buildTestContext(octokit, baseContext)
 
-  // Step 6: Decide if test generation is needed (the "gating" step).
+  // 6) Decide if we should generate tests or skip
   const gating = await gatingStep(
     testContext,
     octokit,
@@ -92,14 +88,14 @@ export async function runFlow() {
     reviewAnalysis
   )
 
-  // If gating says we don't need tests, do not generate tests and skip to running tests
   if (!gating.shouldGenerate) {
+    // If gating says skip, we simply run tests with existing coverage
     testBody = gating.testBody
     testBody +=
       "\n\nSkipping test generation as existing tests are sufficient. Running tests..."
     await updateComment(octokit, baseContext, testCommentId, testBody)
   } else {
-    // If gating says we should proceed, we handle test generation
+    // Otherwise, generate new/updated tests
     testBody = gating.testBody
     await handleTestGeneration(
       octokit,
@@ -110,10 +106,10 @@ export async function runFlow() {
     )
   }
 
-  // Step 7: After generating tests, we run them locally to see if they pass.
+  // 7) Run tests locally to see if they pass
   let testResult = runLocalTests()
 
-  // We allow up to maxIterations attempts to fix failing tests automatically
+  // 8) If failing, attempt iterative fixes up to 3 times
   let iteration = 0
   const maxIterations = 3
 
@@ -122,7 +118,6 @@ export async function runFlow() {
     testBody += `\n\n**Test Fix #${iteration}**\nTests are failing. Attempting a fix...`
     await updateComment(octokit, baseContext, testCommentId, testBody)
 
-    // Attempt to fix the failing tests by generating new or updated test code
     await handleTestFix(
       octokit,
       testContext,
@@ -136,15 +131,73 @@ export async function runFlow() {
     testResult = runLocalTests()
   }
 
-  // If eventually all tests pass, we celebrate
+  // 9) If eventually passing, we update the comment with success
   if (!testResult.jestFailed) {
     testBody += "\n\n✅ All tests passing after AI generation/fixes!"
     await updateComment(octokit, baseContext, testCommentId, testBody)
     process.exit(0)
   } else {
-    // If we've run out of fix attempts and they still fail, we fail the action
+    // 10) If we still fail after maxIterations, we post a final failure message
     testBody += `\n\n❌ Tests failing after ${maxIterations} fix attempts.`
     await updateComment(octokit, baseContext, testCommentId, testBody)
     process.exit(1)
   }
+}
+
+/**
+ * runLocalFlow:
+ * - A simplified version that doesn't require a PR context or GitHub comments.
+ * - We run local tests, and if failing, do up to 3 fix attempts by prompting the LLM.
+ * - If eventually passing, we return true, otherwise false.
+ */
+export function runLocalFlow(): boolean {
+  console.log("Running local flow (no PR context).")
+
+  // 1) Run tests
+  let testResult = runLocalTests()
+  if (!testResult.jestFailed) {
+    console.log("All tests already passing. No AI fix needed.")
+    return true
+  }
+
+  // 2) If failing, do iterative fix attempts
+  let iteration = 0
+  const maxIterations = 3
+
+  while (testResult.jestFailed && iteration < maxIterations) {
+    iteration++
+    console.log(`**Test Fix #${iteration}** - Attempting fix...`)
+
+    // We call handleTestFix, but pass dummy data for the GitHub arguments, since we're local.
+    handleTestFix(
+      null as any,
+      {
+        owner: "",
+        repo: "",
+        pullNumber: 0,
+        headRef: "",
+        baseRef: "",
+        title: "",
+        changedFiles: [],
+        commitMessages: [],
+        existingTestFiles: []
+      },
+      iteration,
+      testResult.output,
+      0,
+      ""
+    )
+
+    testResult = runLocalTests()
+  }
+
+  // 3) If still failing, we return false
+  if (testResult.jestFailed) {
+    console.error(`Tests still failing after ${maxIterations} attempts.`)
+    return false
+  }
+
+  // 4) Otherwise, success
+  console.log("Tests passing after AI fix attempts!")
+  return true
 }

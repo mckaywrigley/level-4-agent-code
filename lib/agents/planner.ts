@@ -5,23 +5,25 @@ into a list of high-level steps. Each step has a title and a description.
 </ai_context>
 */
 
+import { Step } from "@/types/step-types"
 import { generateObject } from "ai"
 import { z } from "zod"
 import { getLLMModel } from "./llm"
 
 /**
  * plannerSchema:
- * - We expect an array of objects, each with "title" and "description".
+ * - We expect an array of objects, each with "stepName", "stepDescription", and "stepPlan".
  *   Example:
  *   [
- *     { "title": "Step1", "description": "Do X, Y, Z" },
- *     { "title": "Step2", "description": "Then do A, B, C" }
+ *     { "stepName": "Step1", "stepDescription": "1-2 sentences describing the step", "stepPlan": "Plan for the step" },
+ *     { "stepName": "Step2", "stepDescription": "1-2 sentences describing the step", "stepPlan": "Plan for the step" }
  *   ]
  */
 const plannerSchema = z.array(
   z.object({
-    title: z.string(),
-    description: z.string()
+    stepName: z.string(),
+    stepDescription: z.string(),
+    stepPlan: z.string()
   })
 )
 
@@ -33,9 +35,7 @@ const plannerSchema = z.array(
  *   returning valid JSON that matches the plannerSchema.
  * - If there's a parsing error, we provide a fallback step indicating an error.
  */
-export async function runPlanner(
-  featureRequest: string
-): Promise<{ title: string; description: string }[]> {
+export async function runPlanner(featureRequest: string): Promise<Step[]> {
   const model = getLLMModel()
   const prompt = `
 You are an AI planner. Given the user's request:
@@ -44,10 +44,9 @@ You are an AI planner. Given the user's request:
 
 Break it down into a concise ordered list of steps to implement. Return valid JSON only, with the structure:
 [
-  {"title":"Step1","description":"Detailed instructions..."},
-  {"title":"Step2","description":"..."}
+  {"stepName":"Step1","stepDescription":"1-2 sentences describing the step","stepPlan":"Plan for the step"},
+  {"stepName":"Step2","stepDescription":"1-2 sentences describing the step","stepPlan":"Plan for the step"}
 ]
-Each step's "description" should describe the coding or config changes needed.
 `
 
   try {
@@ -66,8 +65,9 @@ Each step's "description" should describe the coding or config changes needed.
     // to a single-step "PlanError".
     return [
       {
-        title: "PlanError",
-        description: "Unable to parse planning output."
+        stepName: "PlanError",
+        stepDescription: "Unable to parse planning output.",
+        stepPlan: ""
       }
     ]
   }

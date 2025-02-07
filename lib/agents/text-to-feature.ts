@@ -6,6 +6,7 @@ those changes locally, and commit/push them to the new feature branch.
 </ai_context>
 */
 
+import { Step } from "@/types/step-types"
 import { generateObject } from "ai"
 import { execSync } from "child_process"
 import fs from "fs"
@@ -32,15 +33,17 @@ const changesSchema = z.array(
  * - The LLM returns a JSON array of file changes that need to be applied.
  */
 export async function getFileChangesForStep(
-  stepDescription: string
+  step: Step
 ): Promise<{ file: string; content: string }[]> {
   const model = getLLMModel()
 
   // The LLM is expected to return valid JSON with a "file" and "content"
   // for each changed file.
   const prompt = `
-You are given a step description for a coding task:
-"${stepDescription}"
+You are given a step for a coding task:
+Step name: "${step.stepName}"
+Step description: "${step.stepDescription}"
+Step plan: "${step.stepPlan}"
 
 Output an array of objects describing the new or updated files. Return valid JSON only, matching:
 [

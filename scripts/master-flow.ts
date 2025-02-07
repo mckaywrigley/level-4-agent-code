@@ -44,10 +44,10 @@ async function main() {
   // 2) Loop over each planned step
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i]
-    console.log(`\n--- Step ${i + 1}: ${step.title} ---\n`)
+    console.log(`\n--- Step ${i + 1}: ${step.stepName} ---\n`)
 
     // 2a) Call the "Text-to-Feature" agent to get the file changes
-    const changes = await getFileChangesForStep(step.description)
+    const changes = await getFileChangesForStep(step)
     console.log(
       "Proposed file changes:",
       changes.map(c => c.file)
@@ -57,7 +57,7 @@ async function main() {
     applyFileChanges(changes)
 
     // 2c) Commit and push those changes
-    commitChanges(`Step ${i + 1}: ${step.title}`)
+    commitChanges(`Step ${i + 1}: ${step.stepName}`)
 
     // 2d) Run local tests & fix attempts
     const passed = runLocalFlow()

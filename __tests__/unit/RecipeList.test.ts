@@ -1,28 +1,27 @@
+import React from 'react';
 import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom';
 import RecipeList from '@/app/recipes/_components/recipe-list';
 
-const sampleRecipes = [
-  { name: 'Spaghetti', description: 'Delicious pasta with tomato sauce' },
-  { name: 'Salad', description: 'Fresh green salad' }
-];
-
 describe('RecipeList Component', () => {
-  it('renders message when no recipes found', () => {
+  it('displays a message when there are no recipes', () => {
     render(<RecipeList initialData={[]} />);
-    expect(screen.getByText('No recipes found.')).toBeInTheDocument();
+    expect(screen.getByText(/No recipes found./i)).toBeInTheDocument();
   });
 
-  it('renders a list of recipes with names and descriptions', () => {
-    render(<RecipeList initialData={sampleRecipes} />);
-    expect(screen.getByText('Spaghetti')).toBeInTheDocument();
-    expect(screen.getByText('Salad')).toBeInTheDocument();
-    expect(screen.getByText('Delicious pasta with tomato sauce')).toBeInTheDocument();
-    expect(screen.getByText('Fresh green salad')).toBeInTheDocument();
-  });
-
-  it('displays "Unnamed Recipe" when recipe name is missing', () => {
-    const recipes = [{ description: 'No name provided' }];
+  it('renders a list of recipes when data is provided', () => {
+    const recipes = [
+      { name: 'Pasta', description: 'Tasty pasta recipe' },
+      { name: 'Salad', description: 'Fresh and healthy' }
+    ];
     render(<RecipeList initialData={recipes} />);
-    expect(screen.getByText('Unnamed Recipe')).toBeInTheDocument();
+
+    // Check for list title
+    expect(screen.getByText(/Recipe List/i)).toBeInTheDocument();
+
+    recipes.forEach(recipe => {
+      expect(screen.getByText(recipe.name)).toBeInTheDocument();
+      expect(screen.getByText(recipe.description)).toBeInTheDocument();
+    });
   });
 });

@@ -10,7 +10,7 @@ Now also updated to:
 3) Force a rebase from the remote branch again inside 'commitChanges' (just before pushing).
 4) **If the branch is brand new (not on remote yet), skip the fetch/rebase steps** and directly do 'git push -u origin HEAD'.
 
-All doc comments remain, with the final fix ensuring we never fetch a remote branch that doesn’t exist.
+All doc comments remain, with the final fix ensuring we never fetch a remote branch that doesn't exist.
 </ai_context>
 */
 
@@ -93,10 +93,9 @@ Return JSON only, matching this structure:
   ]
 }
 `
-  const logPrompt = prompt.replace(
-    codebaseListing,
-    "[codebase listing omitted]"
-  )
+  const logPrompt = prompt
+    .replace(codebaseListing, "[codebase listing omitted]")
+    .replace(codeRules, "[code rules omitted]")
 
   console.log(`\n\n\n\n\n--------------------------------`)
   console.log(`File changes prompt:\n${logPrompt}`)

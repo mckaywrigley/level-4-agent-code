@@ -15,9 +15,9 @@ Find a full tutorial [here](https://www.jointakeoff.com/courses/series-5-levels-
 - The **Planner Agent** (`lib/agents/planner.ts`) reads your `feature_request` and breaks it into an ordered list of steps (e.g., Step1, Step2, etc.).
 - Each step has a short description and a plan for the coding changes needed.
 
-### 3. Draft Pull Request
+### 3. Pull Request
 
-- The workflow script (`scripts/master-flow.ts`) checks out the `main` branch locally, creates a new feature branch (e.g., `agent/add-login`) if one doesn’t exist, then opens a **draft** pull request from that branch → `main`.
+- The workflow script (`scripts/master-flow.ts`) checks out the `main` branch locally, creates a new feature branch (e.g., `agent/add-login`) if one doesn’t exist, then opens a pull request from that branch → `main`.
 - All subsequent changes are pushed to this branch, so we can attach AI reviews to the PR.
 
 ### 4. Step-by-Step Implementation
@@ -58,7 +58,7 @@ For each step in the plan:
   The main script orchestrating the entire “plan → partial commit steps → final review” flow.
 
   1. Switches/creates a new feature branch.
-  2. Ensures a draft PR is open.
+  2. Ensures a PR is open.
   3. Runs the **Planner Agent** to get steps.
   4. For each step:
      - Asks **Text-to-Feature** to propose changes.
@@ -116,8 +116,8 @@ For each step in the plan:
    - The partial code review/test generation/fix runs in the logs.
    - After all steps, a final full pass is done. If everything passes, the PR is marked ready for review.
 
-4. **Check the Draft PR**
-   - GitHub’s Pull Requests section will show a draft PR from `agent/<feature>` to `main`.
+4. **Check the PR**
+   - GitHub’s Pull Requests section will show a PR from `agent/<feature>` to `main`.
    - You can watch as the AI posts “AI Code Review” and “AI Test Generation” comments for each step’s commit, plus for the final pass.
    - If you’re happy, you can merge or continue normal dev.
 
@@ -133,9 +133,6 @@ For each step in the plan:
 
 **Q**: Can I do more than 3 fix iterations?  
 **A**: Yes, modify `const maxIterations = 3` in the flows to your preferred limit.
-
-**Q**: Do I have to keep the PR as a draft at first?  
-**A**: Not necessarily. Draft mode is just a nice way to show “work in progress.” You could open a normal PR if you prefer.
 
 **Q**: What if I need the full file contents for partial commits?  
 **A**: By default, we only fetch partial diffs. If you need the entire content, adapt the logic in `compareCommitsForPR(...)` to fetch file contents similarly to `buildPRContext`.

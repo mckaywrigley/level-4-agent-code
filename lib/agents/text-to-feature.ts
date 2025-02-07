@@ -1,7 +1,7 @@
 /*
 <ai_context>
-Extended with a new helper "ensureDraftPullRequest" that either finds or creates
-a draft PR from branch -> main. This is so each commit can run the "review/test"
+Extended with a new helper "ensurePullRequest" that either finds or creates
+a PR from branch -> main. This is so each commit can run the "review/test"
 logic on that open PR.
 </ai_context>
 */
@@ -127,12 +127,12 @@ export function commitChanges(message: string) {
 }
 
 /**
- * ensureDraftPullRequest:
+ * ensurePullRequest:
  * - Checks if there's already a PR from "branchName" to main.
- * - If none, creates a new PR in "draft" mode with a basic title/body.
+ * - If none, creates a new PR with a basic title/body.
  * - Returns the PR number (we need that to post code review & test generation comments).
  */
-export async function ensureDraftPullRequest(
+export async function ensurePullRequest(
   octokit: Octokit,
   owner: string,
   repo: string,
@@ -151,7 +151,7 @@ export async function ensureDraftPullRequest(
     return existing.data[0].number
   }
 
-  // 2) Create a new draft PR
+  // 2) Create a new PR
   const { data: pr } = await octokit.pulls.create({
     owner,
     repo,

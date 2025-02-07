@@ -1,17 +1,18 @@
-import React from "react";
-import { render, screen } from "@testing-library/react";
-import "@testing-library/jest-dom";
+import React from 'react';
+import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom';
 
-import ContactPage from "@/app/contact/page";
+import ContactPage from '@/app/contact/page';
 
-describe("ContactPage Component", () => {
-  it("renders correctly with the contact heading and placeholder text", () => {
-    render(<ContactPage />);
+describe('ContactPage Component', () => {
+  it('renders the Contact Us heading and placeholder text', () => {
+    const content = ContactPage();
+    render(content);
 
-    // Check for the main heading
-    expect(screen.getByText("Contact Us")).toBeInTheDocument();
+    const headingElement = screen.getByRole('heading', { name: /Contact Us/i });
+    expect(headingElement).toBeInTheDocument();
 
-    // Check for placeholder in the contact form section
-    expect(screen.getByText("[Contact form will be implemented here]")).toBeInTheDocument();
+    const placeholderElement = screen.getByText(/\[Contact form will be implemented here\]/i);
+    expect(placeholderElement).toBeInTheDocument();
   });
 });

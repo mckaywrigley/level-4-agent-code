@@ -9,8 +9,8 @@ export default async function RecipesPage() {
   const recipes = result.isSuccess ? result.data : []
 
   return (
-    <div className="p-4">
-      <h1>Recipes</h1>
+    <div className="p-4 space-y-6">
+      <h1 className="text-3xl font-bold">Recipes</h1>
 
       <RecipeForm />
 

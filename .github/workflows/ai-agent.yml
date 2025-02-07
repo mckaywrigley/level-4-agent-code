@@ -46,6 +46,11 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v3
 
+      - name: Set Git Identity
+        run: |
+          git config user.email "ai-agent@example.com"
+          git config user.name "AI Agent"
+
       # --------------------------------------------
       # 2) Set up Node.js environment
       # --------------------------------------------

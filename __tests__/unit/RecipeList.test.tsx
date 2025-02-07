@@ -25,9 +25,4 @@ describe('RecipeList Component', () => {
       expect(screen.getByText(recipe.description)).toBeInTheDocument();
     });
   });
-
-  it('renders 
-', () => {
-    // Incomplete test case from patch; to be implemented
-  });
 });

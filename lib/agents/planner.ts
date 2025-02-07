@@ -16,28 +16,24 @@ import { getLLMModel } from "./llm"
 
 /**
  * plannerSchema:
- * - We expect an array of objects, each with "stepName", "stepDescription", and "stepPlan".
+ * - We expect an object with a `steps` array, where each step is an object with "stepName", "stepDescription", and "stepPlan".
  *   Example:
- *   [
- *     {
- *       "stepName": "Step1",
- *       "stepDescription": "1-2 sentences describing the step",
- *       "stepPlan": "Plan for the step"
- *     },
- *     {
- *       "stepName": "Step2",
- *       "stepDescription": "1-2 sentences describing the step",
- *       "stepPlan": "Plan for the step"
- *     }
- *   ]
+ *   {
+ *     "steps": [
+ *       {"stepName":"Step1","stepDescription":"1-2 sentences describing the step","stepPlan":"Plan for the step"},
+ *       {"stepName":"Step2","stepDescription":"1-2 sentences describing the step","stepPlan":"Plan for the step"}
+ *     ]
+ *   }
  */
-const plannerSchema = z.array(
-  z.object({
-    stepName: z.string(),
-    stepDescription: z.string(),
-    stepPlan: z.string()
-  })
-)
+const plannerSchema = z.object({
+  steps: z.array(
+    z.object({
+      stepName: z.string(),
+      stepDescription: z.string(),
+      stepPlan: z.string()
+    })
+  )
+})
 
 /**
  * runPlanner:
@@ -71,10 +67,12 @@ Below is the codebase context, showing file paths and contents (truncated if lar
 ${codebaseListing}
 
 Now, break the user's request into a concise ordered list of steps to implement. Return valid JSON only, with the structure:
-[
-  {"stepName":"Step1","stepDescription":"1-2 sentences describing the step","stepPlan":"Plan for the step"},
-  {"stepName":"Step2","stepDescription":"1-2 sentences describing the step","stepPlan":"Plan for the step"}
-]
+{
+  "steps": [
+    {"stepName":"Step1","stepDescription":"1-2 sentences describing the step","stepPlan":"Plan for the step"},
+    {"stepName":"Step2","stepDescription":"1-2 sentences describing the step","stepPlan":"Plan for the step"}
+  ]
+}
 
 Be sure to incorporate knowledge of the existing code if relevant.
 `
@@ -86,7 +84,7 @@ Be sure to incorporate knowledge of the existing code if relevant.
       model,
       schema: plannerSchema,
       schemaName: "plan",
-      schemaDescription: "Plan out steps as an array",
+      schemaDescription: "Plan out steps as an object with steps array",
       prompt
     })
 
@@ -95,12 +93,8 @@ Be sure to incorporate knowledge of the existing code if relevant.
       `\n\n---   Planner LLM Result ---\n${JSON.stringify(result.object, null, 2)}\n--- End ---\n`
     )
     console.log(`--------------------------------\n\n\n\n\n`)
-    return result.object
+    return result.object.steps
   } catch (error: any) {
-    console.log(`\n\n\n\n\n--------------------------------`)
-    console.log(`Error in planner:`)
-    console.log(error)
-    console.log(`--------------------------------\n\n\n\n\n`)
     // If there's an error (either from LLM or JSON parse), we default
     // to a single-step "PlanError".
     return [

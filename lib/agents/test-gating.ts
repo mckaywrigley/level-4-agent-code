@@ -112,7 +112,12 @@ ${combinedRec}
       schema: gatingSchema,
       schemaName: "decision",
       schemaDescription: "Decision for test generation",
-      prompt
+      prompt,
+      providerOptions: {
+        openai: {
+          reasoningEffort: "high"
+        }
+      }
     })
     console.log(`\n\n\n\n\n--------------------------------`)
     console.log(`Gating result:\n${JSON.stringify(result.object, null, 2)}`)

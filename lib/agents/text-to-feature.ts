@@ -92,7 +92,12 @@ Return JSON only, with structure:
       schema: changesSchema,
       schemaName: "changes",
       schemaDescription: "Array of file changes to apply",
-      prompt
+      prompt,
+      providerOptions: {
+        openai: {
+          reasoningEffort: "high"
+        }
+      }
     })
     console.log(`\n\n\n\n\n--------------------------------`)
     console.log(

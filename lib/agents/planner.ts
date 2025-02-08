@@ -60,7 +60,12 @@ Return valid JSON only:
       schema: plannerSchema,
       schemaName: "plan",
       schemaDescription: "Plan out steps as an object with steps array",
-      prompt
+      prompt,
+      providerOptions: {
+        openai: {
+          reasoningEffort: "high"
+        }
+      }
     })
     console.log(`\n\n\n\n\n--------------------------------`)
     console.log(

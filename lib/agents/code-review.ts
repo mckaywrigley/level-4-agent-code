@@ -103,7 +103,12 @@ ${changedFilesPrompt}
       schema: reviewSchema,
       schemaName: "review",
       schemaDescription: "Code review feedback in JSON",
-      prompt
+      prompt,
+      providerOptions: {
+        openai: {
+          reasoningEffort: "high"
+        }
+      }
     })
     console.log(`\n\n\n\n\n--------------------------------`)
     console.log(`Review result:\n${JSON.stringify(result.object, null, 2)}`)

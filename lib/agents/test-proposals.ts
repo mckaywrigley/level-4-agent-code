@@ -133,7 +133,12 @@ ${existingTestsPrompt}
       schema: testProposalsSchema,
       schemaName: "testProposals",
       schemaDescription: "Proposed test files in JSON",
-      prompt
+      prompt,
+      providerOptions: {
+        openai: {
+          reasoningEffort: "high"
+        }
+      }
     })
     console.log(`\n\n\n\n\n--------------------------------`)
     console.log(`Test result:\n${JSON.stringify(result.object, null, 2)}`)

@@ -1,0 +1,93 @@
+# ----------------------------------------------------------
+# AI Agent Flow (Manual Trigger) - Detailed Explanation
+# ----------------------------------------------------------
+# This GitHub Actions workflow demonstrates how the AI Agent logic runs in a continuous
+# integration (CI) context. Instead of listening to pushes or pull requests automatically,
+# this workflow is triggered manually via GitHub's "workflow_dispatch" event.
+#
+# Once triggered, it performs the following tasks:
+# 1) Checks out the repository code.
+# 2) Sets up a Node.js environment.
+# 3) Installs all dependencies via `npm ci`.
+# 4) Runs the `scripts/master-flow.ts` script, which:
+#    - Uses the Planner Agent to break down a "feature request" into multiple steps.
+#    - Iteratively calls the Text-to-Feature Agent to implement each step in code.
+#    - Commits each step to a new feature branch.
+#    - Posts partial AI reviews for each commit (if configured).
+#    - Once all steps are done, does a final test run, test generation/fix loop, and
+#      if everything passes, it opens or updates a Pull Request from the agent branch to `main`.
+#
+# The 'feature_request' input is the key prompt describing what you want the AI to build.
+# For example, if a user enters: "Add a new Contact Form with basic validation."
+# the AI attempts to plan and implement that feature step by step in the repository code.
+# ----------------------------------------------------------
+
+name: AI Agent Flow (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      feature_request:
+        description: "Describe the feature or change you want the AI to implement."
+        required: true
+        type: string
+
+jobs:
+  ai-agent:
+    runs-on: ubuntu-latest
+
+    # ----------------------------------------------------------
+    # We need permissions to write to contents/pull-requests/issues
+    # so that we can commit changes and open PRs from the AI script.
+    # ----------------------------------------------------------
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      # --------------------------------------------
+      # 1) Check out the repository code
+      # --------------------------------------------
+      - name: Check out the repository
+        uses: actions/checkout@v3
+
+      - name: Set Git Identity
+        run: |
+          git config user.email "ai-agent@example.com"
+          git config user.name "AI Agent"
+
+      # --------------------------------------------
+      # 2) Set up Node.js environment
+      # --------------------------------------------
+      - name: Set up Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      # --------------------------------------------
+      # 3) Install dependencies using npm ci
+      #    This ensures a clean installation.
+      # --------------------------------------------
+      - name: Install dependencies
+        run: npm ci
+
+      # --------------------------------------------
+      # 4) Run the Master Flow script
+      #    This script orchestrates the entire AI pipeline:
+      #      - Planning (breaking the feature request into steps)
+      #      - Implementing each step by updating files locally
+      #      - Committing the changes
+      #      - Running partial reviews on each commit
+      #      - Final full test & review pass, then opening/updating a PR
+      # --------------------------------------------
+      - name: Run AI Master Flow
+        run: |
+          npx tsx scripts/master-flow.ts
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEATURE_REQUEST: ${{ github.event.inputs.feature_request }}
+          LOCAL_RUN: "1"

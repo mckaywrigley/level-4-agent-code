@@ -122,6 +122,9 @@ ${changedFilesPrompt}
 Existing Tests:
 ${existingTestsPrompt}
 `
+  console.log(`\n\n\n\n\n--------------------------------`)
+  console.log(`Test prompt:\n${prompt}`)
+  console.log(`--------------------------------\n\n\n\n\n`)
 
   const modelInfo = getLLMModel()
   try {
@@ -132,6 +135,9 @@ ${existingTestsPrompt}
       schemaDescription: "Proposed test files in JSON",
       prompt
     })
+    console.log(`\n\n\n\n\n--------------------------------`)
+    console.log(`Test result:\n${JSON.stringify(result, null, 2)}`)
+    console.log(`--------------------------------\n\n\n\n\n`)
     return result.object.testProposals
   } catch (err) {
     return []

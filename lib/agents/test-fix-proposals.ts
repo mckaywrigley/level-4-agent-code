@@ -62,6 +62,10 @@ Existing Tests:
 ${existingTestsPrompt}
 `
 
+  console.log(`\n\n\n\n\n--------------------------------`)
+  console.log(`Test fix prompt:\n${prompt}`)
+  console.log(`--------------------------------\n\n\n\n\n`)
+
   const modelInfo = getLLMModel()
 
   try {
@@ -72,6 +76,9 @@ ${existingTestsPrompt}
       schemaDescription: "Proposed test fixes in JSON",
       prompt
     })
+    console.log(`\n\n\n\n\n--------------------------------`)
+    console.log(`Test fix result:\n${JSON.stringify(result, null, 2)}`)
+    console.log(`--------------------------------\n\n\n\n\n`)
     return result.object.testProposals
   } catch (err) {
     console.error("Error generating test fix proposals:", err)

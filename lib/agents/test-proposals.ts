@@ -1,6 +1,6 @@
 /**
- * This file handles creation or update of test files.
- * Key change: We'll gather existing tests from the local filesystem, not from GitHub.
+ * Handles creation or update of test files for normal (new) test generation.
+ * Also exports the zod schema and TestProposal interface for reuse in fix flows.
  */
 
 import { generateObject } from "ai"
@@ -12,8 +12,10 @@ import { updateComment } from "./github-comments"
 import { getLLMModel } from "./llm"
 import { PullRequestContextWithTests } from "./pr-context"
 
-// The shape of the test proposals we expect from the LLM
-const testProposalsSchema = z.object({
+// -------------------------------------
+// 1) Export the schema so we can reuse
+// -------------------------------------
+export const testProposalsSchema = z.object({
   testProposals: z.array(
     z.object({
       filename: z.string(),
@@ -26,6 +28,9 @@ const testProposalsSchema = z.object({
   )
 })
 
+// -------------------------------------
+// 2) Export the TestProposal interface
+// -------------------------------------
 export interface TestProposal {
   filename: string
   testContent: string
@@ -37,10 +42,8 @@ export interface TestProposal {
 
 /**
  * handleTestGeneration:
- * - Posts a status update comment about generating tests.
- * - Calls generateTestsForChanges to produce new or updated test files from the LLM.
- * - Then commits those changes to the PR branch (via local commits).
- * - Finally updates the comment with the list of new/updated test files.
+ * - Called when we want to do “normal” new or updated tests after code changes
+ * - Gathers proposals, commits them, and updates the GitHub PR comment.
  */
 export async function handleTestGeneration(
   octokit: any,
@@ -57,11 +60,10 @@ export async function handleTestGeneration(
     recommendation = `Review Analysis:\n${reviewAnalysis.summary}`
   }
 
-  // We get an array of test proposals from the AI
+  // Generate proposals with the normal flow
   const proposals = await generateTestsForChanges(context, recommendation)
 
   if (proposals.length > 0) {
-    // We commit each test file creation/update locally
     await commitTestsLocally(proposals)
     testBody += "\n\n**Proposed new/updated tests:**\n"
     for (const p of proposals) {
@@ -76,10 +78,9 @@ export async function handleTestGeneration(
 
 /**
  * generateTestsForChanges:
- * - Builds a combined prompt detailing changed files, existing tests, etc.
- * - Asks LLM to propose new or updated test files in strict JSON schema.
+ * - Builds a prompt for normal (new) test generation based on changed files, existing tests, etc.
  */
-async function generateTestsForChanges(
+export async function generateTestsForChanges(
   context: PullRequestContextWithTests,
   recommendation: string
 ): Promise<TestProposal[]> {
@@ -106,14 +107,7 @@ IMPORTANT:
 - Return JSON only with structure:
 {
   "testProposals": [
-    {
-      "filename": "string",
-      "testContent": "string",
-      "actions": {
-        "action": "create" | "update" | "rename",
-        "oldFilename": "string"
-      }
-    }
+    {"filename":"...", "testContent":"...", "actions": { "action":"create","oldFilename":""}}
   ]
 }
 
@@ -128,9 +122,7 @@ ${changedFilesPrompt}
 Existing Tests:
 ${existingTestsPrompt}
 `
-  console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`Test proposals prompt:\n${prompt}`)
-  console.log(`--------------------------------\n\n\n\n\n`)
+
   const modelInfo = getLLMModel()
   try {
     const result = await generateObject({
@@ -140,11 +132,6 @@ ${existingTestsPrompt}
       schemaDescription: "Proposed test files in JSON",
       prompt
     })
-    console.log(`\n\n\n\n\n--------------------------------`)
-    console.log(
-      `Test proposals result:\n${JSON.stringify(result.object, null, 2)}`
-    )
-    console.log(`--------------------------------\n\n\n\n\n`)
     return result.object.testProposals
   } catch (err) {
     return []
@@ -153,12 +140,12 @@ ${existingTestsPrompt}
 
 /**
  * commitTestsLocally:
- * - Writes or updates the test files on the local disk.
- * - Does NOT push them directly; we rely on the main flow to do the local commit/push steps.
+ * - Writes or updates each test file on disk.
+ * - We do not push them from here; the main flow does commits.
  */
-async function commitTestsLocally(proposals: TestProposal[]) {
+export async function commitTestsLocally(proposals: TestProposal[]) {
   for (const p of proposals) {
-    // If rename, remove the old file from local if it exists
+    // If rename, remove the old file if it exists
     if (
       p.actions?.action === "rename" &&
       p.actions.oldFilename &&
@@ -170,7 +157,7 @@ async function commitTestsLocally(proposals: TestProposal[]) {
       }
     }
 
-    // Write the new or updated file
+    // Write/overwrite the file
     const localPath = path.join(process.cwd(), p.filename)
     fs.mkdirSync(path.dirname(localPath), { recursive: true })
     fs.writeFileSync(localPath, p.testContent, "utf-8")

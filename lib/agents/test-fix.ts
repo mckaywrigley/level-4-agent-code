@@ -1,17 +1,19 @@
 /**
  * This file implements logic for attempting to fix failing tests in an iterative loop.
- * If tests fail, we provide the test error output to the AI model to refine or create
- * new test code. We do NOT change the local-vs-remote logic here; we simply rely on
- * local files being up to date.
+ * If tests fail, we provide the test error output to the AI so it knows what's failing.
+ * We now use a dedicated "generateTestFixProposals" function that includes the failing
+ * Jest output in the LLM prompt, producing updated or new tests to fix the errors.
  */
 
+import { updateComment } from "./github-comments"
 import { PullRequestContextWithTests } from "./pr-context"
-import { handleTestGeneration } from "./test-proposals"
+import { generateTestFixProposals } from "./test-fix-proposals"
+import { commitTestsLocally } from "./test-proposals"
 
 /**
  * handleTestFix:
  * - Called when our main test loop sees a failing result.
- * - We pass the test error output to the AI so it knows what's failing.
+ * - We pass the test error output to the AI so it can propose updated/new tests that fix the failures.
  */
 export async function handleTestFix(
   octokit: any,
@@ -21,20 +23,31 @@ export async function handleTestFix(
   testCommentId: number,
   testBody: string
 ) {
-  // We pass the test error output to the AI so it knows what's failing
-  const fixPrompt = `
-We have failing tests (attempt #${iteration}).
-Here is the error output:
-${testErrorOutput}
+  // Let the comment reflect we’re generating a fix:
+  testBody += `\n\n**Test Fix Attempt #${iteration}**`
+  testBody += `\nError output:\n\`\`\`\n${testErrorOutput}\n\`\`\`\n`
+  testBody += "Generating fix proposals..."
 
-Please fix or create new tests as needed, returning JSON in the same format.
-`
+  await updateComment(octokit, context, testCommentId, testBody)
 
-  await handleTestGeneration(
-    octokit,
+  // 1) Actually generate the fix proposals using the new function
+  const proposals = await generateTestFixProposals(
     context,
-    undefined,
-    testCommentId,
-    testBody + fixPrompt
+    testErrorOutput,
+    iteration
   )
+
+  // 2) If proposals are returned, commit them
+  if (proposals.length > 0) {
+    await commitTestsLocally(proposals)
+
+    testBody += `\n\n**Proposed test fixes**:\n`
+    for (const p of proposals) {
+      testBody += `- ${p.filename}\n`
+    }
+  } else {
+    testBody += "\nNo fix proposals were returned."
+  }
+
+  await updateComment(octokit, context, testCommentId, testBody)
 }

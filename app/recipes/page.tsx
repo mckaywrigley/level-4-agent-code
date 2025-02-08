@@ -39,12 +39,12 @@ export default function RecipesPage() {
   };
 
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Recipe Creator</h1>
+    <div className="max-w-2xl mx-auto p-6">
+      <h1 className="text-3xl font-bold mb-6">Recipe Creator</h1>
 
-      <form onSubmit={handleSubmit} className="space-y-4 mb-8">
+      <form onSubmit={handleSubmit} className="space-y-6 mb-8">
         <div className="flex flex-col">
-          <label className="mb-1 font-medium">Recipe Title</label>
+          <label className="mb-1 text-sm font-medium text-gray-700">Recipe Title</label>
           <Input
             type="text"
             placeholder="Enter recipe title"
@@ -54,7 +54,7 @@ export default function RecipesPage() {
         </div>
 
         <div className="flex flex-col">
-          <label className="mb-1 font-medium">Ingredients</label>
+          <label className="mb-1 text-sm font-medium text-gray-700">Ingredients</label>
           <Textarea
             placeholder="List ingredients, separated by commas"
             value={ingredients}
@@ -64,7 +64,7 @@ export default function RecipesPage() {
         </div>
 
         <div className="flex flex-col">
-          <label className="mb-1 font-medium">Instructions</label>
+          <label className="mb-1 text-sm font-medium text-gray-700">Instructions</label>
           <Textarea
             placeholder="Enter cooking instructions"
             value={instructions}
@@ -79,11 +79,11 @@ export default function RecipesPage() {
       <div>
         <h2 className="text-xl font-bold mb-4">My Recipes</h2>
         {recipes.length === 0 ? (
-          <p>No recipes added yet.</p>
+          <p className="text-gray-500">No recipes added yet.</p>
         ) : (
           <div className="space-y-4">
             {recipes.map((recipe) => (
-              <div key={recipe.id} className="border p-4 rounded-md">
+              <div key={recipe.id} className="border p-4 rounded-md hover:shadow-lg transition-shadow duration-200">
                 <h3 className="text-lg font-semibold">{recipe.title}</h3>
                 <p><strong>Ingredients:</strong> {recipe.ingredients}</p>
                 <p><strong>Instructions:</strong> {recipe.instructions}</p>

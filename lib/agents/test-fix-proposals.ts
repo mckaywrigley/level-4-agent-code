@@ -77,7 +77,7 @@ ${existingTestsPrompt}
       prompt
     })
     console.log(`\n\n\n\n\n--------------------------------`)
-    console.log(`Test fix result:\n${JSON.stringify(result, null, 2)}`)
+    console.log(`Test fix result:\n${JSON.stringify(result.object, null, 2)}`)
     console.log(`--------------------------------\n\n\n\n\n`)
     return result.object.testProposals
   } catch (err) {

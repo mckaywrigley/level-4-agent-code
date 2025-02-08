@@ -29,9 +29,6 @@ ${testErrorOutput}
 
 Please fix or create new tests as needed, returning JSON in the same format.
 `
-  console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`Test fix prompt:\n${fixPrompt}`)
-  console.log(`--------------------------------\n\n\n\n\n`)
 
   await handleTestGeneration(
     octokit,

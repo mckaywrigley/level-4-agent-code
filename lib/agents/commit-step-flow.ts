@@ -1,113 +1,46 @@
-/*
-<ai_context>
-Focuses on the latest commit only, after each step, to do code review/test generation/fix
-(based on partial local diffs). We used to fetch partial diffs from GitHub, but now
-we rely on local 'compareCommitsForPR'.
-</ai_context>
-*/
+/**
+ * commit-step-flow.ts
+ *
+ * Focuses on the latest commit only, after each step, to do a *partial* AI flow.
+ *
+ * In this updated version, we only do an AI code review for the latest commit.
+ * We skip test gating, test generation, and iterative test fixes at each step.
+ *
+ * Instead, the full test/fix cycle happens at the end (see runFlowOnPR).
+ */
 
 import { Octokit } from "@octokit/rest"
-import { handleReviewAgent, ReviewAnalysis } from "./code-review"
-import { createComment, updateComment } from "./github-comments"
+import { handleReviewAgent } from "./code-review"
+import { createComment } from "./github-comments"
 import { compareCommitsForPR } from "./partial-pr-context"
-import { buildTestContext } from "./pr-context"
-import { handleTestFix } from "./test-fix"
-import { gatingStep } from "./test-gating"
-import { handleTestGeneration } from "./test-proposals"
-import { runLocalTests } from "./test-runner"
 
+/**
+ * runFlowOnLatestCommit:
+ * - Compares HEAD~1..HEAD locally to get only this new commit's changes.
+ * - Posts an "AI Code Review" comment on the PR for these partial changes.
+ * - *Skips* test gating, generation, and fixes here.
+ * - Returns true (we don't fail partial steps on tests).
+ */
 export async function runFlowOnLatestCommit(
   octokit: Octokit,
   owner: string,
   repo: string,
   pullNumber: number
 ): Promise<boolean> {
-  // 1) Compare HEAD~1..HEAD locally
+  // 1) Compare HEAD~1..HEAD to get partial context (latest commit only).
   const partialContext = await compareCommitsForPR(owner, repo, pullNumber)
 
-  // 2) Build a partial test context by scanning local tests
-  const partialTestContext = await buildTestContext(partialContext)
-
-  // 3) Post a placeholder "AI Code Review" comment
+  // 2) Post a placeholder "AI Code Review" comment for this commit.
   let reviewBody = "### AI Code Review (Latest Commit)\n_(initializing...)_"
   const reviewCommentId = await createComment(
     octokit,
-    partialTestContext,
+    partialContext,
     reviewBody
   )
 
-  // 4) Perform code review on just the new changes
-  const reviewAnalysis: ReviewAnalysis | undefined = await handleReviewAgent(
-    octokit,
-    partialTestContext,
-    reviewCommentId,
-    reviewBody
-  )
+  // 3) Perform code review on just the new changes
+  await handleReviewAgent(octokit, partialContext, reviewCommentId, reviewBody)
 
-  // 5) Post a placeholder "AI Test Generation" comment
-  let testBody = "### AI Test Generation (Latest Commit)\n_(initializing...)_"
-  const testCommentId = await createComment(
-    octokit,
-    partialTestContext,
-    testBody
-  )
-
-  // 6) Gating step
-  const gating = await gatingStep(
-    partialTestContext,
-    octokit,
-    testCommentId,
-    testBody,
-    reviewAnalysis
-  )
-  if (!gating.shouldGenerate) {
-    testBody = gating.testBody
-    testBody +=
-      "\n\nSkipping test generation for this latest commit. Running tests..."
-    await updateComment(octokit, partialTestContext, testCommentId, testBody)
-  } else {
-    testBody = gating.testBody
-    await handleTestGeneration(
-      octokit,
-      partialTestContext,
-      reviewAnalysis,
-      testCommentId,
-      testBody
-    )
-  }
-
-  // 7) Run local tests
-  let testResult = runLocalTests()
-
-  // 8) If failing, do iterative fix attempts
-  let iteration = 0
-  const maxIterations = 3
-  while (testResult.jestFailed && iteration < maxIterations) {
-    iteration++
-    testBody += `\n\n**Test Fix #${iteration}**\nLatest commit tests failing. Attempting a fix...`
-    await updateComment(octokit, partialTestContext, testCommentId, testBody)
-
-    await handleTestFix(
-      octokit,
-      partialTestContext,
-      iteration,
-      testResult.output,
-      testCommentId,
-      testBody
-    )
-
-    testResult = runLocalTests()
-  }
-
-  // 9) Return success/failure
-  if (!testResult.jestFailed) {
-    testBody +=
-      "\n\n✅ Tests passing (latest commit) after AI generation/fixes!"
-    await updateComment(octokit, partialTestContext, testCommentId, testBody)
-    return true
-  } else {
-    testBody += `\n\n❌ Tests failing on latest commit after ${maxIterations} fix attempts.`
-    await updateComment(octokit, partialTestContext, testCommentId, testBody)
-    return false
-  }
+  // 4) Always return true (we no longer run tests here).
+  return true
 }

@@ -1,8 +1,8 @@
 /**
  * This file implements a "gating" step:
- * Before we generate or fix tests, we decide whether test generation is needed at all.
- * The LLM returns a boolean plus a reasoning.
- * If it says "false," we skip test generation and end the workflow.
+ * Decides whether test generation is needed at all (true/false).
+ * We haven't changed the local vs remote logic here, because gating
+ * only reads from a context object that we already constructed from local diffs.
  */
 
 import { generateObject } from "ai"
@@ -25,8 +25,6 @@ const gatingSchema = z.object({
  * gatingStep:
  * - Posts a comment indicating that we're checking if test generation is necessary.
  * - Calls gatingStepLogic to evaluate the PR changes, existing tests, and code review notes.
- * - If the gating says "no," we skip test generation.
- * - Returns an object with `shouldGenerate`, plus any updated comment body text.
  */
 export async function gatingStep(
   context: PullRequestContextWithTests,
@@ -54,15 +52,14 @@ export async function gatingStep(
 
 /**
  * gatingStepLogic:
- * - Builds a prompt that includes the changed files, existing tests, and the code review analysis.
+ * - Builds a prompt that includes the changed files, existing tests, and any code review notes.
  * - Asks the LLM to return JSON with a "shouldGenerateTests" boolean.
- * - If "shouldGenerateTests" is false, the workflow won't generate or fix tests.
  */
 async function gatingStepLogic(
   context: PullRequestContextWithTests,
   reviewAnalysis?: ReviewAnalysis
 ) {
-  // Summaries of existing tests
+  // Summaries of existing tests from the local context
   const existingTestsPrompt = context.existingTestFiles
     .map(f => `Existing test: ${f.filename}\n---\n${f.content}`)
     .join("\n")
@@ -80,15 +77,11 @@ async function gatingStepLogic(
     combinedRec = "Review Analysis:\n" + reviewAnalysis.summary
   }
 
-  // We want the LLM to respond with structured JSON telling us if we should generate tests
   const prompt = `
 You are an expert in deciding if tests are needed.
 
-If you see *anything* new that should be tested or that breaks any existing tests, you should return true. Be thorough in your analysis.
-
-You only generate tests for frontend related code in the /app directory.
-
-You only generate unit tests in the __tests__/unit directory.
+If you see *anything* new that should be tested or that breaks existing tests, return true. 
+Only generate tests for frontend code in /app. Only unit tests in __tests__/unit.
 
 Return JSON only:
 {
@@ -130,7 +123,6 @@ ${combinedRec}
       recommendation: result.object.decision.recommendation
     }
   } catch (err) {
-    // If we can't parse the LLM response, we default to "do not generate"
     return { shouldGenerate: false, reason: "Gating error", recommendation: "" }
   }
 }

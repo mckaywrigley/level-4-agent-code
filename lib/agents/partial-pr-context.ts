@@ -1,95 +1,103 @@
 /*
 <ai_context>
 Builds a "partial" PR context focusing only on the latest commit's changes,
-using the Compare Commits API. The returned object has the same shape as a
-PullRequestContext (owner, repo, changedFiles, etc.) so we can reuse the same
-review/test logic, but it's only for the last commit's changes.
+using local git commands instead of the Compare Commits API. The returned
+object has the same shape as a PullRequestContext, but we rely on local
+filesystem and git patch data.
+
+We do NOT fetch from GitHub. Instead, we do "git diff HEAD~1 HEAD".
 </ai_context>
 */
 
-import { Octokit } from "@octokit/rest"
+import { execSync } from "child_process"
 import { PullRequestContext } from "./pr-context"
 
+/**
+ * compareCommitsForPR:
+ * - NO LONGER calls GitHub APIs for diff data. Instead, we do a local:
+ *     git diff HEAD~1 HEAD --unified=99999
+ * - Returns a partial "PullRequestContext" shaped object, but only focusing
+ *   on the last commit's changes.
+ */
 export async function compareCommitsForPR(
-  octokit: Octokit,
   owner: string,
   repo: string,
   pullNumber: number
 ): Promise<PullRequestContext> {
-  // 1) Get PR data so we know the head ref, title, etc.
-  const { data: pr } = await octokit.pulls.get({
-    owner,
-    repo,
-    pull_number: pullNumber
-  })
-
-  // 2) List commits in the PR
-  const commitsRes = await octokit.pulls.listCommits({
-    owner,
-    repo,
-    pull_number: pullNumber
-  })
-  const allCommits = commitsRes.data
-  if (allCommits.length === 0) {
-    throw new Error(
-      `No commits in PR #${pullNumber} - cannot do partial compare.`
-    )
+  // 1) We assume we are already on the correct feature branch locally.
+  // 2) Grab the last commit message so we can store it in commitMessages array.
+  let lastCommitMessage = "Unknown commit message"
+  try {
+    lastCommitMessage = execSync(`git log -1 --pretty=%B`, {
+      encoding: "utf8"
+    }).trim()
+  } catch (e) {
+    // fallback
   }
 
-  // The last commit in the array is HEAD
-  const headCommitSha = allCommits[allCommits.length - 1].sha
-
-  // The commit's parent (assuming a single parent) is the base for compare
-  const parents = allCommits[allCommits.length - 1].parents
-  if (!parents || parents.length === 0) {
-    throw new Error(`HEAD commit has no parent. Possibly a single-commit PR?`)
-  }
-  const parentSha = parents[0].sha
-
-  // 3) Compare the parent to the head (latest commit only)
-  const compare = await octokit.repos.compareCommits({
-    owner,
-    repo,
-    base: parentSha,
-    head: headCommitSha
-  })
-
-  // Build a partial "changedFiles" array
-  const changedFiles = []
-  if (compare.data.files) {
-    for (const f of compare.data.files) {
-      // We only care about the patch for the single commit
-      const fileObj = {
-        filename: f.filename,
-        patch: f.patch ?? "",
-        status: f.status || "",
-        additions: f.additions ?? 0,
-        deletions: f.deletions ?? 0,
-        content: undefined as string | undefined,
-        excluded: false
-      }
-      changedFiles.push(fileObj)
-    }
+  // 3) Gather the patch from HEAD~1..HEAD
+  let patchOutput = ""
+  try {
+    patchOutput = execSync(`git diff HEAD~1 HEAD --unified=99999`, {
+      encoding: "utf8"
+    })
+  } catch (err) {
+    // If there's only one commit, HEAD~1 might fail. We'll set patchOutput = entire HEAD
+    patchOutput = "No patch found (possibly first commit?)"
   }
 
-  // We do not fetch full file content for partial context
-  // If you want to fetch it, you can do so similarly to buildPRContext.
-  // For brevity, let's skip that.
+  // 4) Parse the patch into changedFiles array
+  //    For simplicity, we store the entire patch as .patch. We do NOT fetch content from remote.
+  //    If you want, you can parse the patch to get additions/deletions, etc.
+  const changedFiles = parseDiffToChangedFiles(patchOutput)
 
-  // Also gather commit messages from just this single commit
-  const commitMessages = [allCommits[allCommits.length - 1].commit.message]
-
-  // 4) Return a "PullRequestContext" shaped object, except it only has partial info
+  // 5) Return a partial "PullRequestContext"
   const partialContext: PullRequestContext = {
     owner,
     repo,
     pullNumber,
-    headRef: pr.head.ref,
-    baseRef: pr.base.ref,
-    title: `Latest commit partial: ${pr.title}`,
+    headRef: `unknown`, // We skip for partial context
+    baseRef: `unknown`,
+    title: `Latest commit partial: (Local Diff)`,
     changedFiles,
-    commitMessages
+    commitMessages: [lastCommitMessage]
   }
 
   return partialContext
+}
+
+/**
+ * parseDiffToChangedFiles:
+ * Takes the raw diff from `git diff` and splits into file-based patches.
+ * Minimally, we store patch text. We do not fetch full file content.
+ */
+function parseDiffToChangedFiles(diffText: string) {
+  // naive approach: split on "diff --git "
+  const segments = diffText.split("diff --git ")
+  const results = []
+  for (const seg of segments) {
+    if (!seg.trim()) continue
+    // typically starts like: a/path b/path ...
+    const lines = seg.split("\n")
+    const firstLine = lines[0] || ""
+    // parse out filenames if you want
+    // for now we'll store patch = entire segment
+    const patch = "diff --git " + seg
+
+    // naive parse for filename from line
+    const match = /a\/(\S+)\s+b\/(\S+)/.exec(firstLine)
+    const filename = match ? match[2] : "unknown.file"
+
+    results.push({
+      filename,
+      patch,
+      status: "", // we skip for partial
+      additions: 0,
+      deletions: 0,
+      content: undefined,
+      excluded: false
+    })
+  }
+
+  return results
 }

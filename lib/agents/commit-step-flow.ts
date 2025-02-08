@@ -1,8 +1,8 @@
 /*
 <ai_context>
-Focuses review/test generation/fix logic *only for the latest commit* on the PR,
-rather than the entire PR's changes. Used after each step to handle incremental changes.
-Now, we fetch existingTestFiles so the partial context satisfies PullRequestContextWithTests.
+Focuses on the latest commit only, after each step, to do code review/test generation/fix
+(based on partial local diffs). We used to fetch partial diffs from GitHub, but now
+we rely on local 'compareCommitsForPR'.
 </ai_context>
 */
 
@@ -22,16 +22,11 @@ export async function runFlowOnLatestCommit(
   repo: string,
   pullNumber: number
 ): Promise<boolean> {
-  // 1) Build a partial PR context focusing on the latest commit only
-  const partialContext = await compareCommitsForPR(
-    octokit,
-    owner,
-    repo,
-    pullNumber
-  )
+  // 1) Compare HEAD~1..HEAD locally
+  const partialContext = await compareCommitsForPR(owner, repo, pullNumber)
 
-  // 2) Add "existingTestFiles" so it matches PullRequestContextWithTests
-  const partialTestContext = await buildTestContext(octokit, partialContext)
+  // 2) Build a partial test context by scanning local tests
+  const partialTestContext = await buildTestContext(partialContext)
 
   // 3) Post a placeholder "AI Code Review" comment
   let reviewBody = "### AI Code Review (Latest Commit)\n_(initializing...)_"
@@ -41,7 +36,7 @@ export async function runFlowOnLatestCommit(
     reviewBody
   )
 
-  // 4) Perform code review on the partial changes
+  // 4) Perform code review on just the new changes
   const reviewAnalysis: ReviewAnalysis | undefined = await handleReviewAgent(
     octokit,
     partialTestContext,
@@ -57,7 +52,7 @@ export async function runFlowOnLatestCommit(
     testBody
   )
 
-  // 6) Gating step on the partial changes
+  // 6) Gating step
   const gating = await gatingStep(
     partialTestContext,
     octokit,
@@ -65,7 +60,6 @@ export async function runFlowOnLatestCommit(
     testBody,
     reviewAnalysis
   )
-
   if (!gating.shouldGenerate) {
     testBody = gating.testBody
     testBody +=
@@ -88,7 +82,6 @@ export async function runFlowOnLatestCommit(
   // 8) If failing, do iterative fix attempts
   let iteration = 0
   const maxIterations = 3
-
   while (testResult.jestFailed && iteration < maxIterations) {
     iteration++
     testBody += `\n\n**Test Fix #${iteration}**\nLatest commit tests failing. Attempting a fix...`

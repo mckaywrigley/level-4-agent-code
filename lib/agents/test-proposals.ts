@@ -1,14 +1,9 @@
 /**
- * This file handles the creation or update of tests based on the PR changes.
- *
- * Steps:
- *  1) We combine the changed files, existing tests, and any additional context (like code review).
- *  2) We prompt the LLM to propose new or updated tests in a strict JSON schema.
- *  3) We parse that schema, then commit the test changes to the PR branch on GitHub.
+ * This file handles creation or update of test files.
+ * Key change: We'll gather existing tests from the local filesystem, not from GitHub.
  */
 
 import { generateObject } from "ai"
-import { Buffer } from "buffer"
 import fs from "fs"
 import path from "path"
 import { z } from "zod"
@@ -31,7 +26,6 @@ const testProposalsSchema = z.object({
   )
 })
 
-// We define the TypeScript interface for convenience
 export interface TestProposal {
   filename: string
   testContent: string
@@ -45,8 +39,8 @@ export interface TestProposal {
  * handleTestGeneration:
  * - Posts a status update comment about generating tests.
  * - Calls generateTestsForChanges to produce new or updated test files from the LLM.
- * - Then commits those changes to the PR branch with commitTests.
- * - Finally updates the comment with the list of newly created/updated test files.
+ * - Then commits those changes to the PR branch (via local commits).
+ * - Finally updates the comment with the list of new/updated test files.
  */
 export async function handleTestGeneration(
   octokit: any,
@@ -67,14 +61,8 @@ export async function handleTestGeneration(
   const proposals = await generateTestsForChanges(context, recommendation)
 
   if (proposals.length > 0) {
-    // We commit each test file creation/update
-    await commitTests(
-      octokit,
-      context.owner,
-      context.repo,
-      context.headRef,
-      proposals
-    )
+    // We commit each test file creation/update locally
+    await commitTestsLocally(proposals)
     testBody += "\n\n**Proposed new/updated tests:**\n"
     for (const p of proposals) {
       testBody += `- ${p.filename}\n`
@@ -83,16 +71,13 @@ export async function handleTestGeneration(
     testBody += "\n\nNo new test proposals from AI."
   }
 
-  // Update the comment on GitHub
   await updateComment(octokit, context, testCommentId, testBody)
 }
 
 /**
  * generateTestsForChanges:
- * - Builds a combined prompt detailing changed files and any existing tests.
- * - Asks the LLM to produce JSON describing proposed test changes.
- * - Uses the testProposalsSchema to parse the LLM response.
- * - Then calls finalizeTestProposals to handle naming conventions (e.g. .test.ts vs .test.tsx).
+ * - Builds a combined prompt detailing changed files, existing tests, etc.
+ * - Asks LLM to propose new or updated test files in strict JSON schema.
  */
 async function generateTestsForChanges(
   context: PullRequestContextWithTests,
@@ -109,27 +94,23 @@ async function generateTestsForChanges(
     })
     .join("\n---\n")
 
-  // The LLM prompt: includes the code changes, existing tests, and any recommended improvements from code review
   const prompt = `
 You are an expert developer specializing in test generation.
 
-You only generate tests for frontend related code in the /app directory.
-You only generate unit tests in the __tests__/unit directory.
+Only generate tests for frontend code in /app.
+Only generate unit tests in __tests__/unit.
 
-IMPORTANT: 
-- If the code references React/JSX, ensure any test files are named ".test.tsx" — never ".test.ts".
-- Do not produce duplicates where you have both .test.ts and .test.tsx for the same component.
-- Always import '@testing-library/jest-dom' for DOM matchers
-- Always import '@testing-library/react' for React testing utilities
-
-Return only valid JSON matching this structure:
+IMPORTANT:
+- If the code references React/JSX, name test files .test.tsx
+- Always import '@testing-library/jest-dom' and '@testing-library/react'
+- Return JSON only with structure:
 {
   "testProposals": [
     {
       "filename": "string",
       "testContent": "string",
       "actions": {
-        "action": "create" or "update" or "rename",
+        "action": "create" | "update" | "rename",
         "oldFilename": "string"
       }
     }
@@ -137,9 +118,7 @@ Return only valid JSON matching this structure:
 }
 
 Recommendation:
-<recommendation>
 ${recommendation}
-</recommendation>
 
 Title: ${context.title}
 Commits:
@@ -154,7 +133,6 @@ ${existingTestsPrompt}
   console.log(`--------------------------------\n\n\n\n\n`)
   const modelInfo = getLLMModel()
   try {
-    // Attempt to parse the LLM's JSON into our schema
     const result = await generateObject({
       model: modelInfo,
       schema: testProposalsSchema,
@@ -169,174 +147,91 @@ ${existingTestsPrompt}
     console.log(`--------------------------------\n\n\n\n\n`)
     return finalizeTestProposals(result.object.testProposals, context)
   } catch (err) {
-    // If there's a parse error, we return an empty array (meaning no proposals)
     return []
   }
 }
 
 /**
  * finalizeTestProposals:
- * - Adjusts test file naming or paths to ensure they adhere to typical patterns (e.g. .test.tsx for React).
- * - Ensures tests end up under __tests__/unit/ if not specified.
- * - **NEW**: If both a .test.ts and a .test.tsx are proposed for the same base, we keep only the .test.tsx.
+ * - Adjusts test file naming or paths to .test.tsx or .test.ts
+ * - Ensures tests end up under __tests__/unit/
+ * - If we have both .test.ts and .test.tsx for same base, prefer .test.tsx
  */
 function finalizeTestProposals(
   rawProposals: TestProposal[],
   context: PullRequestContextWithTests
 ): TestProposal[] {
-  // Map each proposed file to either .test.tsx or .test.ts
+  // Attempt to detect React code. If there's a changed file with .tsx or import React, assume React test.
+  const isReact = context.changedFiles.some(file => {
+    if (!file.content) return false
+    return (
+      file.filename.endsWith(".tsx") ||
+      file.content.includes("import React") ||
+      file.content.includes('from "react"')
+    )
+  })
+
   let proposals = rawProposals.map(proposal => {
-    // Decide if it's likely a React-based test
-    const isReact = context.changedFiles.some(file => {
-      if (!file.content) return false
-      return (
-        file.filename.endsWith(".tsx") ||
-        file.content.includes("import React") ||
-        file.content.includes('from "react"') ||
-        file.filename.includes("app/")
-      )
-    })
-
     let newFilename = proposal.filename
-
-    // If it's a React-based test, ensure .test.tsx
     if (isReact && !newFilename.endsWith(".test.tsx")) {
       newFilename = newFilename.replace(/\.test\.ts$/, ".test.tsx")
     } else if (!isReact && !newFilename.endsWith(".test.ts")) {
-      // If not React-based, ensure .test.ts
       newFilename = newFilename.replace(/\.test\.tsx$/, ".test.ts")
     }
 
-    // Ensure the file is placed in __tests__/unit if not already
     if (!newFilename.includes("__tests__/unit")) {
       newFilename = `__tests__/unit/${newFilename}`
     }
-
     return { ...proposal, filename: newFilename }
   })
 
-  // **NEW**: Remove duplicates if we have both .test.ts and .test.tsx for the same base name
+  // Remove duplicates if we have both .test.ts and .test.tsx for the same base name
   const seenBases = new Map<string, TestProposal>()
   const filtered: TestProposal[] = []
 
   for (const proposal of proposals) {
-    // Derive base name (e.g. "RecipeForm" from "RecipeForm.test.ts" or "RecipeForm.test.tsx")
     const baseName = proposal.filename.replace(/\.test\.tsx?$/, "")
     const existing = seenBases.get(baseName)
-
     if (!existing) {
-      // Not seen yet, store it
       seenBases.set(baseName, proposal)
       filtered.push(proposal)
     } else {
-      // We already have a proposal with the same base name
-      // If the new one is .test.tsx but the old is .test.ts, prefer the .test.tsx
       const oldIsTsx = existing.filename.endsWith(".test.tsx")
       const newIsTsx = proposal.filename.endsWith(".test.tsx")
 
       if (newIsTsx && !oldIsTsx) {
-        // We replace the old .test.ts with the new .test.tsx
         const indexToRemove = filtered.indexOf(existing)
         if (indexToRemove !== -1) {
           filtered.splice(indexToRemove, 1)
         }
         filtered.push(proposal)
         seenBases.set(baseName, proposal)
-      } else {
-        // If the old one is already .test.tsx, keep it
-        // Or if they are both the same extension, just keep the first
-        // (Adjust logic to your preference if needed)
       }
     }
   }
-
   return filtered
 }
 
 /**
- * commitTests:
- * - For each test proposal, we either create or update the file in the PR branch.
- * - We also handle "rename" actions by deleting the old file.
- * - This is where we actually push commits back to GitHub using Octokit.
+ * commitTestsLocally:
+ * - Writes or updates the test files on the local disk.
+ * - Does NOT push them directly; we rely on the main flow to do the local commit/push steps.
  */
-async function commitTests(
-  octokit: any,
-  owner: string,
-  repo: string,
-  branch: string,
-  proposals: TestProposal[]
-) {
+async function commitTestsLocally(proposals: TestProposal[]) {
   for (const p of proposals) {
-    // Handle file renames by deleting the old file first
+    // If rename, remove the old file from local if it exists
     if (
       p.actions?.action === "rename" &&
       p.actions.oldFilename &&
       p.actions.oldFilename !== p.filename
     ) {
-      try {
-        const { data: oldFile } = await octokit.repos.getContent({
-          owner,
-          repo,
-          path: p.actions.oldFilename,
-          ref: branch
-        })
-        if ("sha" in oldFile) {
-          await octokit.repos.deleteFile({
-            owner,
-            repo,
-            path: p.actions.oldFilename,
-            message: `Rename ${p.actions.oldFilename} to ${p.filename}`,
-            branch,
-            sha: oldFile.sha
-          })
-        }
-      } catch (err: any) {
-        // Ignore 404 errors if old file doesn't exist
-        if (err.status !== 404) throw err
+      const oldPath = path.join(process.cwd(), p.actions.oldFilename)
+      if (fs.existsSync(oldPath)) {
+        fs.rmSync(oldPath)
       }
     }
 
-    // Encode file content to base64 for GitHub API
-    const encoded = Buffer.from(p.testContent, "utf8").toString("base64")
-
-    try {
-      // Try to get existing file to update it
-      const { data: existingFile } = await octokit.repos.getContent({
-        owner,
-        repo,
-        path: p.filename,
-        ref: branch
-      })
-
-      // Update existing file if found
-      if ("sha" in existingFile) {
-        await octokit.repos.createOrUpdateFileContents({
-          owner,
-          repo,
-          path: p.filename,
-          message: `Add/Update tests: ${p.filename}`,
-          content: encoded,
-          branch,
-          sha: existingFile.sha
-        })
-      }
-    } catch (error: any) {
-      // Create new file if 404 (doesn't exist)
-      if (error.status === 404) {
-        await octokit.repos.createOrUpdateFileContents({
-          owner,
-          repo,
-          path: p.filename,
-          message: `Add/Update tests: ${p.filename}`,
-          content: encoded,
-          branch
-        })
-      } else {
-        throw error
-      }
-    }
-
-    // Write file to local filesystem as well
+    // Write the new or updated file
     const localPath = path.join(process.cwd(), p.filename)
     fs.mkdirSync(path.dirname(localPath), { recursive: true })
     fs.writeFileSync(localPath, p.testContent, "utf-8")

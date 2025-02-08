@@ -2,17 +2,18 @@
  * This file defines functions and interfaces to build a "PullRequestContext" object,
  * which encapsulates the relevant data about a PR (title, changed files, commit messages).
  *
- * - buildPRContext: Gathers the main info about the pull request and files changed.
- * - buildTestContext: Extends that context by also fetching existing tests.
+ * We used to call GitHub to fetch file contents, but now we read the local git diff
+ * from the base branch to HEAD. We also read local commit messages via git commands.
  */
 
-import { Octokit } from "@octokit/rest"
-import { Buffer } from "buffer"
+import { execSync } from "child_process"
+import fs from "fs"
+import path from "path"
 
 /**
  * The main shape of a pull request context used by other modules.
- * - changedFiles array includes patch diffs, potential file content, etc.
- * - commitMessages is an array of the commit messages from the PR.
+ * - changedFiles array includes patch diffs, optional file content, etc.
+ * - commitMessages is an array of commit messages from HEAD's commits.
  */
 export interface PullRequestContext {
   owner: string
@@ -35,7 +36,6 @@ export interface PullRequestContext {
 
 /**
  * This extends PullRequestContext with an additional array for existing test files.
- * Used in test generation logic so the AI can see what tests already exist.
  */
 export interface PullRequestContextWithTests extends PullRequestContext {
   existingTestFiles: {
@@ -46,184 +46,137 @@ export interface PullRequestContextWithTests extends PullRequestContext {
 
 /**
  * buildPRContext:
- * - Retrieves PR info from GitHub (title, head/base branches).
- * - Lists changed files and collects their patch data and file content (if not too large).
- * - Also obtains the commit messages for the PR.
+ * - Instead of contacting GitHub for file diffs/contents, we:
+ *   1) Find the merge base of HEAD and main (or another base).
+ *   2) Do git diff to get changes for all commits in this branch.
+ *   3) Gather commit messages from the same range.
  */
 export async function buildPRContext(
-  octokit: Octokit,
   owner: string,
   repo: string,
   pullNumber: number
 ): Promise<PullRequestContext> {
-  // Get main PR metadata
-  const { data: pr } = await octokit.pulls.get({
-    owner,
-    repo,
-    pull_number: pullNumber
-  })
-
-  // Get file changes in the PR
-  const filesRes = await octokit.pulls.listFiles({
-    owner,
-    repo,
-    pull_number: pullNumber
-  })
-
-  // Get commits in the PR
-  const commitsRes = await octokit.pulls.listCommits({
-    owner,
-    repo,
-    pull_number: pullNumber
-  })
-
-  const changedFiles = []
-  for (const file of filesRes.data) {
-    const fileObj = {
-      filename: file.filename,
-      patch: file.patch ?? "",
-      status: file.status || "",
-      additions: file.additions || 0,
-      deletions: file.deletions || 0,
-      content: undefined as string | undefined,
-      excluded: false
-    }
-
-    // If file is not removed and not in the exclude patterns, fetch content
-    if (file.status !== "removed" && !shouldExcludeFile(file.filename)) {
-      const content = await getFileContent(
-        octokit,
-        owner,
-        repo,
-        file.filename,
-        pr.head.ref
-      )
-      // If the file content is large, we skip storing it to avoid blowing up prompt
-      if (content && content.length <= 32000) {
-        fileObj.content = content
-      } else {
-        fileObj.excluded = true
-      }
-    } else {
-      fileObj.excluded = true
-    }
-
-    changedFiles.push(fileObj)
+  // 1) We assume we have the local feature branch checked out.
+  //    We'll find a local merge-base with main, e.g.:
+  let mergeBase = "HEAD"
+  try {
+    mergeBase = execSync(`git merge-base HEAD main`, {
+      encoding: "utf8"
+    }).trim()
+  } catch (err) {
+    // fallback
   }
 
-  // Convert commit data to an array of messages
-  const commitMessages = commitsRes.data.map(c => c.commit.message)
+  // 2) Build diff from that merge base to HEAD
+  let patchOutput = ""
+  try {
+    patchOutput = execSync(`git diff ${mergeBase} HEAD --unified=99999`, {
+      encoding: "utf8"
+    })
+  } catch (err) {
+    patchOutput = "No patch found. Possibly no changes from main."
+  }
+
+  // parse changed files from the patch
+  const changedFiles = parseFullDiffToChangedFiles(patchOutput)
+
+  // 3) Gather commit messages from mergeBase..HEAD
+  let commitMessages: string[] = []
+  try {
+    const logs = execSync(`git log --pretty=%B ${mergeBase}..HEAD`, {
+      encoding: "utf8"
+    })
+    commitMessages = logs
+      .split("\n")
+      .map(l => l.trim())
+      .filter(Boolean)
+  } catch (err) {
+    commitMessages = []
+  }
 
   return {
     owner,
     repo,
     pullNumber,
-    headRef: pr.head.ref,
-    baseRef: pr.base.ref,
-    title: pr.title || "",
+    headRef: "unknown-local-head",
+    baseRef: "main",
+    title: "Local PR Context",
     changedFiles,
     commitMessages
   }
 }
 
 /**
+ * parseFullDiffToChangedFiles:
+ * - Similar to partial logic, but we assume we might want the entire set of diffs.
+ * - We store the patch in patch, we skip 'status', etc.
+ */
+function parseFullDiffToChangedFiles(diffText: string) {
+  const segments = diffText.split("diff --git ")
+  const results = []
+  for (const seg of segments) {
+    if (!seg.trim()) continue
+    const lines = seg.split("\n")
+    const firstLine = lines[0] || ""
+    const patch = "diff --git " + seg
+    const match = /a\/(\S+)\s+b\/(\S+)/.exec(firstLine)
+    const filename = match ? match[2] : "unknown.file"
+    results.push({
+      filename,
+      patch,
+      status: "",
+      additions: 0,
+      deletions: 0,
+      content: undefined,
+      excluded: false
+    })
+  }
+  return results
+}
+
+/**
  * buildTestContext:
- * - Extends the context built by buildPRContext, but also fetches existing test files from the repository.
- * - This ensures our test generation logic knows about existing tests.
+ * - Extends the context by reading test files from the local `__tests__/unit` folder.
+ * - We do NOT fetch from GitHub.
  */
 export async function buildTestContext(
-  octokit: Octokit,
   context: PullRequestContext
 ): Promise<PullRequestContextWithTests> {
-  const existingTestFiles = await getAllTestFiles(
-    octokit,
-    context.owner,
-    context.repo,
-    context.headRef
-  )
-  return { ...context, existingTestFiles }
+  const testFiles = readLocalTestFiles("__tests__/unit")
+  return { ...context, existingTestFiles: testFiles }
 }
 
 /**
- * Certain files (like package-lock.json) are typically not relevant for our prompt, so we exclude them.
+ * Recursively scan the local `__tests__/unit` folder to read test files.
  */
-function shouldExcludeFile(filename: string): boolean {
-  const EXCLUDE_PATTERNS = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]
-  return EXCLUDE_PATTERNS.some(pattern => filename.endsWith(pattern))
-}
-
-/**
- * getFileContent:
- * - Given a path and branch ref, fetches the file from GitHub as base64,
- *   then decodes it into a string.
- */
-async function getFileContent(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  path: string,
-  ref: string
-) {
-  try {
-    const res = await octokit.repos.getContent({ owner, repo, path, ref })
-    if ("content" in res.data && typeof res.data.content === "string") {
-      return Buffer.from(res.data.content, "base64").toString("utf8")
-    }
-    return undefined
-  } catch (err: any) {
-    // If the file doesn't exist, we simply return undefined
-    if (err.status === 404) {
-      return undefined
-    }
-    throw err
-  }
-}
-
-/**
- * getAllTestFiles:
- * - Recursively searches for files under a given directory (default __tests__/),
- *   fetching content for each file found.
- * - This is used to collect all existing test files so the AI can reference them.
- */
-async function getAllTestFiles(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  ref: string,
-  dirPath = "__tests__"
-): Promise<{ filename: string; content: string }[]> {
+function readLocalTestFiles(
+  dirPath: string
+): { filename: string; content: string }[] {
   const results: { filename: string; content: string }[] = []
-  try {
-    const { data } = await octokit.repos.getContent({
-      owner,
-      repo,
-      path: dirPath,
-      ref
-    })
-    if (Array.isArray(data)) {
-      for (const item of data) {
-        if (item.type === "file") {
-          // If it's a file, get its content
-          const c = await getFileContent(octokit, owner, repo, item.path, ref)
-          if (c) {
-            results.push({ filename: item.path, content: c })
-          }
-        } else if (item.type === "dir") {
-          // If it's a directory, recurse
-          const sub = await getAllTestFiles(
-            octokit,
-            owner,
-            repo,
-            ref,
-            item.path
-          )
-          results.push(...sub)
-        }
+
+  function recurse(currentPath: string) {
+    if (!fs.existsSync(currentPath)) return
+
+    const stat = fs.statSync(currentPath)
+    if (stat.isDirectory()) {
+      const entries = fs.readdirSync(currentPath)
+      for (const entry of entries) {
+        recurse(path.join(currentPath, entry))
+      }
+    } else {
+      // If it's a file, read content if it ends with .test.ts or .test.tsx
+      if (
+        currentPath.endsWith(".test.ts") ||
+        currentPath.endsWith(".test.tsx")
+      ) {
+        const content = fs.readFileSync(currentPath, "utf8")
+        // Make the path relative so it can match or differ
+        const relPath = path.relative(process.cwd(), currentPath)
+        results.push({ filename: relPath, content })
       }
     }
-  } catch (err: any) {
-    // If the directory doesn't exist, we do nothing
-    if (err.status !== 404) throw err
   }
+
+  recurse(path.join(process.cwd(), dirPath))
   return results
 }

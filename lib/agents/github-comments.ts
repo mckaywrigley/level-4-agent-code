@@ -1,7 +1,6 @@
 /**
  * This module abstracts away creating and updating comments on the PR in GitHub.
- *
- * It is used by code-review.ts, flow-runner.ts, etc. to post or edit the AI Agent's messages.
+ * We keep this as is, because we still want to post PR comments via the Octokit API.
  */
 
 import { PullRequestContext } from "./pr-context"
@@ -9,7 +8,6 @@ import { PullRequestContext } from "./pr-context"
 /**
  * createComment:
  * - Creates a brand new comment on the pull request (under the AI account).
- * - Returns the comment ID so we can update it later if needed.
  */
 export async function createComment(
   octokit: any,
@@ -28,7 +26,6 @@ export async function createComment(
 /**
  * updateComment:
  * - Replaces the body of an existing comment with new content.
- * - We pass the comment's ID, then provide the updated text in "body".
  */
 export async function updateComment(
   octokit: any,

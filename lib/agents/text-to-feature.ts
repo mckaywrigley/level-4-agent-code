@@ -1,16 +1,9 @@
 /*
 <ai_context>
-Extended with a new helper "ensurePullRequest" that either finds or creates
-a PR from branch -> main. This is so each commit can run the "review/test"
-logic on that open PR.
-
-Now also updated to:
-1) Gather full codebase context for the text-to-feature step (so the LLM sees the entire code).
-2) More robust branch switch logic that fetches from remote and rebases if the branch exists, avoiding push rejections.
-3) Force a rebase from the remote branch again inside 'commitChanges' (just before pushing).
-4) **If the branch is brand new (not on remote yet), skip the fetch/rebase steps** and directly do 'git push -u origin HEAD'.
-
-All doc comments remain, with the final fix ensuring we never fetch a remote branch that doesn't exist.
+Focuses on reading/writing local files for each step. We commit to our local branch
+and push. No more fetching from remote. We'll keep ensurePullRequest for creating the PR,
+but won't fetch or rebase from remote if the branch doesn't exist — we do the standard
+logic to avoid conflicts, etc.
 </ai_context>
 */
 
@@ -25,13 +18,6 @@ import path from "path"
 import { z } from "zod"
 import { getLLMModel } from "./llm"
 
-/**
- * changesSchema:
- * - We expect an object with a single key "changedFiles"
- * - "changedFiles" is an array of objects, each with "file" and "content".
- * - "file" is the path to the file (e.g. "app/page.tsx")
- * - "content" is the full new content for that file.
- */
 const changesSchema = z.object({
   changedFiles: z.array(
     z.object({
@@ -44,8 +30,7 @@ const changesSchema = z.object({
 /**
  * getFileChangesForStep:
  * - Calls our LLM with a prompt describing the single step to implement.
- * - Now also includes the entire codebase context (similar to planner).
- * - The LLM returns a JSON array of file changes that need to be applied.
+ * - Provides the entire codebase as context, plus any prior changes.
  */
 export async function getFileChangesForStep(
   step: Step,
@@ -53,46 +38,46 @@ export async function getFileChangesForStep(
 ): Promise<FileChange[]> {
   const model = getLLMModel()
 
-  // We'll include prior changes in case the LLM needs to see them
+  // We'll include prior changes in case the LLM needs them
   const priorChangesSnippet = accumulatedChanges
     .map(c => `File: ${c.file}\n---\n${c.content}`)
     .join("\n\n")
 
-  // Gather the entire codebase (like the planner does), minus large or excluded files
+  // Gather entire codebase from local
   const codebaseListing = gatherFullCodebaseContextForFeature(process.cwd())
 
   const prompt = `
-You are an frontend AI coding assistant. You *only* write frontend code. Another AI will handle other parts of the codebase.
+You are a frontend AI coding assistant. You *only* write frontend code. 
+Another AI might handle other parts. 
 
-You have three contexts:
-
-1) The entire current codebase (excluding huge/unnecessary files):
+Entire codebase context (some large files truncated):
 <codebase-listing>
 ${codebaseListing}
 </codebase-listing>
 
-2) A list of prior changes that have been made in earlier steps of this feature:
+So far, the user request has caused some prior changes:
 <prior-changes>
 ${priorChangesSnippet}
 </prior-changes>
 
-3) Some rules for the codebase:
+Here are the code rules:
 <code-rules>
 ${codeRules}
 </code-rules>
 
-Now we have a new step to implement:
+Now implement the next step:
 Name: ${step.stepName}
 Description: ${step.stepDescription}
 Plan: ${step.stepPlan}
 
-Return JSON only, matching this structure:
+Return JSON only, with structure:
 {
   "changedFiles": [
     {"file":"path/to/file.ts","content":"(updated file content)"}
   ]
 }
 `
+
   const logPrompt = prompt
     .replace(codebaseListing, "[codebase listing omitted]")
     .replace(codeRules, "[code rules omitted]")
@@ -106,7 +91,7 @@ Return JSON only, matching this structure:
       model,
       schema: changesSchema,
       schemaName: "changes",
-      schemaDescription: "An array of file changes",
+      schemaDescription: "Array of file changes to apply",
       prompt
     })
     console.log(`\n\n\n\n\n--------------------------------`)
@@ -115,7 +100,7 @@ Return JSON only, matching this structure:
     )
     console.log(`--------------------------------\n\n\n\n\n`)
     return result.object.changedFiles
-  } catch (error: any) {
+  } catch (error) {
     console.error("Error in getFileChangesForStep:", error)
     return []
   }
@@ -123,7 +108,7 @@ Return JSON only, matching this structure:
 
 /**
  * applyFileChanges:
- * - Writes each { file, content } to disk, creating dirs as necessary.
+ * - Writes each { file, content } to disk.
  */
 export function applyFileChanges(changes: FileChange[]) {
   for (const change of changes) {
@@ -135,39 +120,32 @@ export function applyFileChanges(changes: FileChange[]) {
 
 /**
  * switchToFeatureBranch:
- * - Checks out main, pulls latest from origin, fetches all remote branches, then:
- *   1) If the feature branch exists on the remote, we checkout locally & rebase from remote.
- *   2) Otherwise, create a new local branch from main.
+ * - Checks out main, pulls latest, then checks if feature branch exists.
+ * - If yes, checks it out. If no, create from main.
  */
 export function switchToFeatureBranch(branchName: string) {
   try {
-    // Checkout & pull main to ensure we have the latest base
     execSync(`git checkout main`, { stdio: "inherit" })
     execSync(`git pull origin main`, { stdio: "inherit" })
 
-    // Fetch all remote branches
+    // See if remote branch exists
     execSync(`git fetch origin`, { stdio: "inherit" })
-
-    // Check if the branch exists on the remote
     const remoteBranches = execSync(`git branch -r`, { encoding: "utf-8" })
     const branchExistsRemotely = remoteBranches
       .split("\n")
       .some(line => line.trim() === `origin/${branchName}`)
 
     if (branchExistsRemotely) {
-      // Branch already exists on remote; checkout locally & rebase
+      // Checkout and rebase
       try {
         execSync(`git checkout ${branchName}`, { stdio: "inherit" })
       } catch {
-        // If local branch doesn't exist, create it from origin
         execSync(`git checkout -b ${branchName} origin/${branchName}`, {
           stdio: "inherit"
         })
       }
-      // Rebase with remote to avoid push conflicts
       execSync(`git pull origin ${branchName} --rebase`, { stdio: "inherit" })
     } else {
-      // If branch does not exist on remote, create from main
       execSync(`git checkout -b ${branchName}`, { stdio: "inherit" })
     }
   } catch (err) {
@@ -178,24 +156,18 @@ export function switchToFeatureBranch(branchName: string) {
 
 /**
  * commitChanges:
- * - Adds, commits with a message, then either:
- *   1) If the branch is already on remote, fetch + rebase + push.
- *   2) If not, push with '-u' to create it on remote for the first time,
- *      skipping the fetch step that would fail if it doesn't exist yet.
+ * - Add/commit, see if remote branch exists. If so, rebase + push.
+ *   If not, create it with 'git push -u origin HEAD'.
  */
 export function commitChanges(message: string) {
   try {
-    // Stage and commit new changes
     execSync(`git add .`, { stdio: "inherit" })
     execSync(`git commit -m "${message}"`, { stdio: "inherit" })
 
-    // Get the current local branch name
     const currentBranch = execSync(`git branch --show-current`, {
       encoding: "utf-8"
     }).trim()
 
-    // Check if this branch exists on remote
-    // (We parse the output of 'git ls-remote --heads origin <branch>')
     let branchExistsOnRemote = false
     try {
       const lsRemoteOut = execSync(
@@ -206,20 +178,16 @@ export function commitChanges(message: string) {
         branchExistsOnRemote = true
       }
     } catch {
-      // If ls-remote throws, it means there's no remote branch
       branchExistsOnRemote = false
     }
 
     if (branchExistsOnRemote) {
-      // If the remote branch exists, fetch + rebase + push
       execSync(`git fetch origin ${currentBranch}`, { stdio: "inherit" })
       execSync(`git pull --rebase origin ${currentBranch}`, {
         stdio: "inherit"
       })
       execSync(`git push origin HEAD`, { stdio: "inherit" })
     } else {
-      // If the remote branch is brand new, just create it
-      // '-u' sets the upstream so future pushes know where to go
       execSync(`git push -u origin HEAD`, { stdio: "inherit" })
     }
   } catch (error) {
@@ -230,9 +198,8 @@ export function commitChanges(message: string) {
 
 /**
  * ensurePullRequest:
- * - Checks if there's already a PR from "branchName" to main.
- * - If none, creates a new PR with a basic title/body.
- * - Returns the PR number (we need that to post code review & test generation comments).
+ * - Checks if there's already a PR from branchName->main. If none, create it.
+ * - We do not fetch or rebase from remote to get content; just open the PR for discussion.
  */
 export async function ensurePullRequest(
   octokit: Octokit,
@@ -241,7 +208,6 @@ export async function ensurePullRequest(
   branchName: string,
   featureRequest: string
 ): Promise<number> {
-  // 1) See if a PR from this branch → main is already open
   const existing = await octokit.pulls.list({
     owner,
     repo,
@@ -249,11 +215,9 @@ export async function ensurePullRequest(
     state: "open"
   })
   if (existing.data.length > 0) {
-    // If we found an open PR from the same branch, just return its number
     return existing.data[0].number
   }
 
-  // 2) Create a new PR
   const { data: pr } = await octokit.pulls.create({
     owner,
     repo,
@@ -268,13 +232,7 @@ export async function ensurePullRequest(
 
 /**
  * gatherFullCodebaseContextForFeature:
- * - Recursively scans the local filesystem starting from `baseDir`.
- * - Excludes large or irrelevant files to keep prompt size manageable.
- * - Returns a single string that lists all included files with contents.
- *
- * Note: This is nearly identical to the gather logic in planner.ts,
- * but we replicate it here for the "text-to-feature" steps to ensure
- * the LLM can see the broader codebase when implementing each step.
+ * - Recursively scans the local filesystem. Excludes large or irrelevant files.
  */
 function gatherFullCodebaseContextForFeature(baseDir: string): string {
   const excludeDirs = [
@@ -294,40 +252,27 @@ function gatherFullCodebaseContextForFeature(baseDir: string): string {
     if (stat.isDirectory()) {
       const dirName = path.basename(currentPath)
       if (excludeDirs.includes(dirName)) {
-        return // skip this entire directory
+        return
       }
-
-      // read contents
       const entries = fs.readdirSync(currentPath)
       for (const entry of entries) {
         recurse(path.join(currentPath, entry))
       }
     } else {
-      // it's a file
       const fileName = path.basename(currentPath)
       if (excludeFiles.includes(fileName)) {
-        return // skip lockfiles, etc.
+        return
       }
-
-      // read content
       let content = fs.readFileSync(currentPath, "utf-8")
-
-      // check character length limit
       if (content.length > 20000) {
-        return // skip large files
+        content = content.slice(0, 20000) + "\n... [TRUNCATED]"
       }
-
-      // build snippet: "File: path/from/cwd\n---\n(content)"
-      // We'll make the path relative to the baseDir so it's more readable
       const relPath = path.relative(baseDir, currentPath)
-
       const snippet = `File: ${relPath}\n---\n${content}`
       output.push(snippet)
     }
   }
 
   recurse(baseDir)
-
-  // Join them with blank lines
   return output.join("\n\n")
 }

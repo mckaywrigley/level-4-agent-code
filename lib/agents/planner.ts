@@ -1,8 +1,21 @@
 /*
-<ai_context>
-The Planner Agent. No changes needed regarding local vs remote, because it already
-gathered codebase context from disk (like text-to-feature). So this remains basically the same.
-</ai_context>
+planner.ts
+----------------------------------------------------------------------
+The Planner Agent is responsible for taking a "feature request" string
+(e.g., "Add a contact form") and turning it into a multi-step plan that
+makes sense for this codebase.
+
+It returns an array of steps, where each step is an object with:
+  - stepName
+  - stepDescription
+  - stepPlan
+
+Those steps are then individually executed by the Text-to-Feature agent.
+
+We also gather the entire codebase context for the LLM, so it can see
+the folder structure and some truncated file contents, ensuring the plan 
+aligns with the existing code.
+----------------------------------------------------------------------
 */
 
 import { codeRules } from "@/constants/code-rules"
@@ -13,6 +26,7 @@ import * as path from "path"
 import { z } from "zod"
 import { getLLMModel } from "./llm"
 
+// The shape of the returned plan
 const plannerSchema = z.object({
   steps: z.array(
     z.object({
@@ -23,11 +37,23 @@ const plannerSchema = z.object({
   )
 })
 
+/**
+ * runPlanner:
+ * ------------------------------------------------------------------
+ * 1) Gathers the entire codebase listing as context (truncated).
+ * 2) Provides it, along with the feature request, to the LLM
+ *    in a structured prompt.
+ * 3) Expects a JSON response with an array of steps to implement.
+ *
+ * @param featureRequest  The user input describing what needs to be built
+ * @returns               An array of Step objects
+ */
 export async function runPlanner(featureRequest: string): Promise<Step[]> {
+  // We collect the codebase context for the LLM
   const codebaseListing = gatherCodebaseContextForPlanner(process.cwd())
-  console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`Codebase Length:\n~${codebaseListing.length / 4} tokens`)
-  console.log(`--------------------------------\n\n\n\n\n`)
+  console.log(
+    `\n\n--- Codebase Listing Size ---\n~${codebaseListing.length / 4} tokens\n---`
+  )
 
   const model = getLLMModel()
   const prompt = `
@@ -55,6 +81,7 @@ Return valid JSON only:
 `
 
   try {
+    // Attempt to parse the LLM response using the Zod schema
     const result = await generateObject({
       model,
       schema: plannerSchema,
@@ -67,13 +94,13 @@ Return valid JSON only:
         }
       }
     })
-    console.log(`\n\n\n\n\n--------------------------------`)
+
     console.log(
-      `\n\n--- Planner LLM Result ---\n${JSON.stringify(result.object, null, 2)}\n--- End ---\n`
+      `\n--- Planner LLM Result ---\n${JSON.stringify(result.object, null, 2)}\n--- End ---\n`
     )
-    console.log(`--------------------------------\n\n\n\n\n`)
     return result.object.steps
   } catch (error: any) {
+    // If the LLM returned invalid JSON or something else failed, return a single "PlanError" step.
     return [
       {
         stepName: "PlanError",
@@ -85,6 +112,16 @@ Return valid JSON only:
   }
 }
 
+/**
+ * gatherCodebaseContextForPlanner:
+ * ------------------------------------------------------------------
+ * Recursively reads the entire local directory, excluding certain
+ * large or irrelevant folders, to gather the codebase context.
+ * Truncates large files to keep token usage manageable.
+ *
+ * @param baseDir The root directory of the local codebase
+ * @returns       A text dump of files and partial file contents
+ */
 function gatherCodebaseContextForPlanner(baseDir: string): string {
   const excludeDirs = [
     ".git",

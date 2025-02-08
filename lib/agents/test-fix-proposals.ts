@@ -1,15 +1,30 @@
 /**
- * This file provides a dedicated function to generate "test fix" proposals,
- * i.e., updated or new test files specifically targeting a known failing test scenario.
+ * test-fix-proposals.ts
+ * --------------------------------------------------------------------
+ * This file deals with generating proposals to fix failing tests.
+ *
+ * For example, if our standard test run says certain tests fail,
+ * we pass the failing output to the LLM and ask it to propose
+ * modifications or new test files to remedy the issues.
+ *
+ * It's very similar to `test-proposals.ts` but specialized for
+ * "fixing" existing tests rather than creating new ones from scratch.
+ * --------------------------------------------------------------------
  */
 
 import { generateObject } from "ai"
 import { getLLMModel } from "./llm"
 import { PullRequestContextWithTests } from "./pr-context"
-
-// Reuse the same testProposalsSchema & TestProposal interface from test-proposals.
 import { TestProposal, testProposalsSchema } from "./test-proposals"
 
+/**
+ * generateTestFixProposals:
+ * ------------------------------------------------------------------
+ * 1) We gather the failing test output, changed files, and existing test files.
+ * 2) Prompt the LLM to propose test changes that would fix the failing scenario.
+ * 3) The LLM returns an array of file modifications or new test files,
+ *    in the same JSON shape we used for normal test proposals.
+ */
 export async function generateTestFixProposals(
   context: PullRequestContextWithTests,
   testErrorOutput: string,
@@ -62,13 +77,12 @@ Existing Tests:
 ${existingTestsPrompt}
 `
 
-  console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`Test fix prompt:\n${prompt}`)
-  console.log(`--------------------------------\n\n\n\n\n`)
+  console.log(`\n\n--- Test Fix Prompt #${iteration} ---\n${prompt}\n---`)
 
   const modelInfo = getLLMModel()
 
   try {
+    // Use the same testProposalsSchema as normal test proposals
     const result = await generateObject({
       model: modelInfo,
       schema: testProposalsSchema,
@@ -81,9 +95,10 @@ ${existingTestsPrompt}
         }
       }
     })
-    console.log(`\n\n\n\n\n--------------------------------`)
-    console.log(`Test fix result:\n${JSON.stringify(result.object, null, 2)}`)
-    console.log(`--------------------------------\n\n\n\n\n`)
+
+    console.log(
+      `\n--- Test Fix Proposals #${iteration} ---\n${JSON.stringify(result.object, null, 2)}\n---`
+    )
     return result.object.testProposals
   } catch (err) {
     console.error("Error generating test fix proposals:", err)

@@ -1,19 +1,23 @@
 /*
 scripts/master-flow.ts
+----------------------------------------------------------------------
+This script is the main orchestration for the entire "multi-step feature" 
+workflow in this repo. Typically, it's triggered by the GitHub Actions 
+workflow in `.github/workflows/ai-agent.yml`.
 
-This script orchestrates the entire multi-step AI feature workflow:
-1) Switch/create the agent/<timestamp> branch from main.
-2) Open/find a PR from that branch to main.
-3) Run the Planner Agent to break down the feature request into steps.
-4) For each step:
-   - Generate code changes (Text-to-Feature).
-   - Commit them.
-   - Run a partial code review pass (runFlowOnLatestCommit) to post a comment
-     about the changes — but *do not* run or fix tests at each step.
-5) After all steps, run runFlowOnPR which *does* the full code review,
-   plus test gating, test generation, and iterative test fixing.
-6) If that final pass succeeds, mark the PR as ready for review.
-*/
+Process Outline:
+ 1) Validate environment variables (FEATURE_REQUEST, GITHUB_TOKEN, etc.).
+ 2) Determine a unique feature branch name (like `agent/20250101_1530`).
+ 3) Switch to that branch (create if needed).
+ 4) Plan the feature steps (using the Planner Agent).
+ 5) For each step:
+    a) Generate code changes (Text-to-Feature).
+    b) Apply them locally.
+    c) Commit & push.
+    d) Optionally do a partial code review/test with `runFlowOnLatestCommit`.
+ 6) After all steps, run a final full PR review/test with `runFlowOnPR`.
+    - If successful, we can mark the PR as ready.
+----------------------------------------------------------------------*/
 
 import { runFlowOnLatestCommit } from "@/lib/agents/commit-step-flow"
 import { runPlanner } from "@/lib/agents/planner"
@@ -30,7 +34,7 @@ import { Step } from "@/types/step-types"
 import { Octokit } from "@octokit/rest"
 
 async function main() {
-  // 1) Check for required environment variables
+  // 1) Check environment variables
   const featureRequest = process.env.FEATURE_REQUEST
   if (!featureRequest) {
     console.error("Missing FEATURE_REQUEST environment variable.")
@@ -52,7 +56,7 @@ async function main() {
   const [owner, repo] = repoStr.split("/")
   const octokit = new Octokit({ auth: githubToken })
 
-  // 2) Generate a date/time-based branch name: "agent/20250101_1530"
+  // 2) Generate a date/time-based branch name, e.g., agent/20250101_1530
   const now = new Date()
   const dateStr =
     now.toISOString().replace(/[-:T]/g, "").slice(0, 8) +
@@ -60,22 +64,21 @@ async function main() {
     now.toTimeString().slice(0, 5).replace(":", "")
   const branchName = `agent/${dateStr}`
 
-  // 3) Switch/create the agent branch locally, from main
+  // 3) Switch/create the agent branch locally from main
   switchToFeatureBranch(branchName)
 
   // 4) Run the Planner Agent to break down the feature request into steps
   console.log(`\n--- Planning steps for: "${featureRequest}" ---\n`)
   const steps = await runPlanner(featureRequest)
-
   if (!steps.length) {
     console.log("Planner returned no steps. Exiting.")
     process.exit(0)
   }
 
-  // 5) Accumulate changes so the LLM sees them in subsequent steps
+  // 5) We'll keep track of all changes so the LLM sees them in subsequent steps
   let accumulatedChanges: FileChange[] = []
 
-  // 6) Generate and commit the FIRST step so that branch isn't empty
+  // 6) Implement the FIRST step so the branch isn't empty, then open a PR
   {
     const step = steps[0]
     console.log(`\n--- Step 1: ${step.stepName} ---\n`)
@@ -83,7 +86,7 @@ async function main() {
     const newChanges = await getFileChangesForStep(step, accumulatedChanges)
     applyFileChanges(newChanges)
 
-    // Save them to accumulated
+    // Merge them into the accumulated changes
     for (const nc of newChanges) {
       accumulatedChanges = accumulatedChanges.filter(a => a.file !== nc.file)
       accumulatedChanges.push(nc)
@@ -101,10 +104,10 @@ async function main() {
     )
     console.log(`PR #${prNumber} created/found.`)
 
-    // Partial code review (no tests/fixes) for this first step
+    // Partial code review on just the new commit
     await runFlowOnLatestCommit(octokit, owner, repo, prNumber)
 
-    // 7) If there are more steps, handle them
+    // 7) If there are more steps, handle them similarly
     for (let i = 1; i < steps.length; i++) {
       const step: Step = steps[i]
       console.log(`\n--- Step ${i + 1}: ${step.stepName} ---\n`)
@@ -113,20 +116,19 @@ async function main() {
       const stepChanges = await getFileChangesForStep(step, accumulatedChanges)
       applyFileChanges(stepChanges)
 
-      // Update our local record
+      // Update our local record of changes
       for (const sc of stepChanges) {
         accumulatedChanges = accumulatedChanges.filter(a => a.file !== sc.file)
         accumulatedChanges.push(sc)
       }
 
-      // Commit & push
       commitChanges(`Step ${i + 1}: ${step.stepName}`)
 
-      // Partial code review (no tests/fixes)
+      // Partial code review for each commit
       await runFlowOnLatestCommit(octokit, owner, repo, prNumber)
     }
 
-    // 8) Once all steps are done, run the final full PR flow with test gating/fixes
+    // 8) Once all steps are done, run the final full PR review/test
     console.log("\nAll steps done. Now doing final full PR review/test pass.\n")
     const finalSuccess = await runFlowOnPR(octokit, owner, repo, prNumber)
     if (!finalSuccess) {
@@ -134,7 +136,7 @@ async function main() {
       process.exit(1)
     }
 
-    // 9) Mark the PR as updated/final
+    // 9) Optionally update PR body to indicate it's ready
     try {
       await octokit.pulls.update({
         owner,

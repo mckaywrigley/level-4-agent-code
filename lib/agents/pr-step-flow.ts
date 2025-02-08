@@ -1,9 +1,17 @@
 /*
-<ai_context>
-Provides a function to run the "AI code review → test gating → test generation
-→ iterative test fix" logic on a specified PR number. We do NOT fetch file content
-from GitHub. Instead, we rely on local buildPRContext that uses local diffs.
-</ai_context>
+pr-step-flow.ts
+----------------------------------------------------------------------
+Provides a function `runFlowOnPR` which performs a *full* review/test 
+workflow for the entire PR as it stands. This is typically done after 
+all partial steps are complete, ensuring the final code is stable.
+
+It does:
+ 1) Code review (AI)
+ 2) Test gating check (decides if we need new or updated tests)
+ 3) Test generation (if needed)
+ 4) Local test run
+ 5) If tests fail, iterative "test fix" attempts
+----------------------------------------------------------------------
 */
 
 import { Octokit } from "@octokit/rest"
@@ -17,10 +25,25 @@ import { runLocalTests } from "./test-runner"
 
 /**
  * runFlowOnPR:
- * - We pass in (octokit, owner, repo, pullNumber).
- * - It executes "review → gating → test generation → fix" logic
- *   on the local code as it stands, using buildPRContext (local diff).
- * - Returns true if tests eventually pass, false otherwise.
+ * ------------------------------------------------------------------
+ * High-level orchestration of the final AI review and test pass
+ * for an entire pull request.
+ *
+ * Steps:
+ *  1) Build the full PR context from local diffs (base..HEAD).
+ *  2) Post an "AI Code Review" comment stub, then fill it in with the actual review.
+ *  3) Post an "AI Test Generation" comment stub.
+ *  4) Build a test context (including existing tests).
+ *  5) Gating step => decides if we need more tests. If yes, propose them.
+ *  6) Run local tests.
+ *  7) If failing, do iterative test fix attempts (up to 3).
+ *  8) Return true if eventually passing, false otherwise.
+ *
+ * @param octokit     The Octokit client
+ * @param owner       The repo owner
+ * @param repo        The repo name
+ * @param pullNumber  The PR number
+ * @returns           true if final tests pass, false otherwise
  */
 export async function runFlowOnPR(
   octokit: Octokit,
@@ -28,14 +51,13 @@ export async function runFlowOnPR(
   repo: string,
   pullNumber: number
 ): Promise<boolean> {
-  // 1) Build local PR context
+  // 1) Build local PR context (all changes)
   const baseContext = await buildPRContext(owner, repo, pullNumber)
 
-  // 2) Post a placeholder "AI Code Review" comment
+  // 2) Post a placeholder code review comment, then do the AI review
   let reviewBody = "### AI Code Review\n_(initializing...)_"
   const reviewCommentId = await createComment(octokit, baseContext, reviewBody)
 
-  // 3) Code review
   const reviewAnalysis: ReviewAnalysis | undefined = await handleReviewAgent(
     octokit,
     baseContext,
@@ -43,14 +65,14 @@ export async function runFlowOnPR(
     reviewBody
   )
 
-  // 4) Post a placeholder "AI Test Generation" comment
+  // 3) Post a placeholder "AI Test Generation" comment
   let testBody = "### AI Test Generation\n_(initializing...)_"
   const testCommentId = await createComment(octokit, baseContext, testBody)
 
-  // 5) Build a test context from local tests
+  // 4) Build a test context that includes existing tests
   const testContext = await buildTestContext(baseContext)
 
-  // 6) Gating step
+  // 5) Gating step => decide if we need new tests
   const gating = await gatingStep(
     testContext,
     octokit,
@@ -59,11 +81,13 @@ export async function runFlowOnPR(
     reviewAnalysis
   )
   if (!gating.shouldGenerate) {
+    // If gating says we do not need new tests, simply run them
     testBody = gating.testBody
     testBody +=
       "\n\nSkipping test generation as existing tests are sufficient. Running tests..."
     await updateComment(octokit, baseContext, testCommentId, testBody)
   } else {
+    // Gating says we do need new tests => call handleTestGeneration
     testBody = gating.testBody
     await handleTestGeneration(
       octokit,
@@ -74,10 +98,10 @@ export async function runFlowOnPR(
     )
   }
 
-  // 7) Run local tests
+  // 6) Run local tests
   let testResult = runLocalTests()
 
-  // 8) If failing, do iterative fix attempts
+  // 7) If failing, attempt up to 3 fix iterations
   let iteration = 0
   const maxIterations = 3
   while (testResult.jestFailed && iteration < maxIterations) {
@@ -85,6 +109,7 @@ export async function runFlowOnPR(
     testBody += `\n\n**Test Fix #${iteration}**\nTests are failing. Attempting a fix...`
     await updateComment(octokit, baseContext, testCommentId, testBody)
 
+    // Attempt to fix the failing tests with AI
     await handleTestFix(
       octokit,
       testContext,
@@ -94,10 +119,11 @@ export async function runFlowOnPR(
       testBody
     )
 
+    // Re-run tests
     testResult = runLocalTests()
   }
 
-  // 9) Return success/failure
+  // 8) Return success/failure. Also update the comment with the final result.
   if (!testResult.jestFailed) {
     testBody += "\n\n✅ All tests passing after AI generation/fixes!"
     await updateComment(octokit, baseContext, testCommentId, testBody)

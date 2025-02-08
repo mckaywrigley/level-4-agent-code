@@ -1,9 +1,22 @@
 /**
- * This file defines functions and interfaces to build a "PullRequestContext" object,
- * which encapsulates the relevant data about a PR (title, changed files, commit messages).
+ * pr-context.ts
+ * --------------------------------------------------------------------
+ * This file defines functions and interfaces to build a "PullRequestContext"
+ * object. That context includes:
+ *   - Owner, repo, PR number
+ *   - Title
+ *   - Array of changed files (with patch diffs, etc.)
+ *   - Array of commit messages
  *
- * We used to call GitHub to fetch file contents, but now we read the local git diff
- * from the base branch to HEAD. We also read local commit messages via git commands.
+ * For the final pass, we want the entire set of changes from the base branch
+ * (usually `main`) to HEAD of the feature branch. That context is used by:
+ *   - Code review
+ *   - Test gating
+ *   - Test generation
+ *
+ * In this local-based approach, we rely on local Git commands (e.g., `git diff`)
+ * rather than using GitHub's remote REST calls.
+ * --------------------------------------------------------------------
  */
 
 import { execSync } from "child_process"
@@ -11,9 +24,7 @@ import fs from "fs"
 import path from "path"
 
 /**
- * The main shape of a pull request context used by other modules.
- * - changedFiles array includes patch diffs, optional file content, etc.
- * - commitMessages is an array of commit messages from HEAD's commits.
+ * The main shape used throughout the code for referencing the PR context.
  */
 export interface PullRequestContext {
   owner: string
@@ -35,7 +46,8 @@ export interface PullRequestContext {
 }
 
 /**
- * This extends PullRequestContext with an additional array for existing test files.
+ * An extended shape that also includes existing test files
+ * for test generation or updating.
  */
 export interface PullRequestContextWithTests extends PullRequestContext {
   existingTestFiles: {
@@ -46,28 +58,30 @@ export interface PullRequestContextWithTests extends PullRequestContext {
 
 /**
  * buildPRContext:
- * - Instead of contacting GitHub for file diffs/contents, we:
- *   1) Find the merge base of HEAD and main (or another base).
- *   2) Do git diff to get changes for all commits in this branch.
- *   3) Gather commit messages from the same range.
+ * ------------------------------------------------------------------
+ * Builds a PullRequestContext by:
+ *   1) Finding the local merge-base with `main`.
+ *   2) Doing a `git diff` from that merge-base to HEAD to collect patches.
+ *   3) Grabbing all commit messages from that range as well.
+ *
+ * This yields an overview of all changes in the feature branch.
  */
 export async function buildPRContext(
   owner: string,
   repo: string,
   pullNumber: number
 ): Promise<PullRequestContext> {
-  // 1) We assume we have the local feature branch checked out.
-  //    We'll find a local merge-base with main, e.g.:
+  // Attempt to find the merge-base of HEAD and main
   let mergeBase = "HEAD"
   try {
     mergeBase = execSync(`git merge-base HEAD main`, {
       encoding: "utf8"
     }).trim()
   } catch (err) {
-    // fallback
+    // fallback if main doesn't exist or some error
   }
 
-  // 2) Build diff from that merge base to HEAD
+  // Gather the patch from mergeBase..HEAD
   let patchOutput = ""
   try {
     patchOutput = execSync(`git diff ${mergeBase} HEAD --unified=99999`, {
@@ -77,10 +91,10 @@ export async function buildPRContext(
     patchOutput = "No patch found. Possibly no changes from main."
   }
 
-  // parse changed files from the patch
+  // Parse changed files
   const changedFiles = parseFullDiffToChangedFiles(patchOutput)
 
-  // 3) Gather commit messages from mergeBase..HEAD
+  // Gather commit messages from mergeBase..HEAD
   let commitMessages: string[] = []
   try {
     const logs = execSync(`git log --pretty=%B ${mergeBase}..HEAD`, {
@@ -108,8 +122,9 @@ export async function buildPRContext(
 
 /**
  * parseFullDiffToChangedFiles:
- * - Similar to partial logic, but we assume we might want the entire set of diffs.
- * - We store the patch in patch, we skip 'status', etc.
+ * ------------------------------------------------------------------
+ * Similar to partial parse logic, but for the entire range from base to HEAD.
+ * We store the entire patch in .patch.
  */
 function parseFullDiffToChangedFiles(diffText: string) {
   const segments = diffText.split("diff --git ")
@@ -136,8 +151,11 @@ function parseFullDiffToChangedFiles(diffText: string) {
 
 /**
  * buildTestContext:
- * - Extends the context by reading test files from the local `__tests__/unit` folder.
- * - We do NOT fetch from GitHub.
+ * ------------------------------------------------------------------
+ * Extends the base PR context by scanning the local `__tests__/unit`
+ * folder for existing tests. We read them from disk so the AI can
+ * see what's already tested and avoid duplicating them or can
+ * update them if needed.
  */
 export async function buildTestContext(
   context: PullRequestContext
@@ -147,7 +165,8 @@ export async function buildTestContext(
 }
 
 /**
- * Recursively scan the local `__tests__/unit` folder to read test files.
+ * Recursively read all test files in `__tests__/unit`, storing
+ * their filenames and contents for the AI to reference.
  */
 function readLocalTestFiles(
   dirPath: string
@@ -164,13 +183,12 @@ function readLocalTestFiles(
         recurse(path.join(currentPath, entry))
       }
     } else {
-      // If it's a file, read content if it ends with .test.ts or .test.tsx
+      // Consider it a test file if it ends in .test.ts or .test.tsx
       if (
         currentPath.endsWith(".test.ts") ||
         currentPath.endsWith(".test.tsx")
       ) {
         const content = fs.readFileSync(currentPath, "utf8")
-        // Make the path relative so it can match or differ
         const relPath = path.relative(process.cwd(), currentPath)
         results.push({ filename: relPath, content })
       }

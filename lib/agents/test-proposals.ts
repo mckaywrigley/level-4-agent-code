@@ -1,9 +1,20 @@
 /**
  * test-proposals.ts
+ * --------------------------------------------------------------------
+ * Handles creation or update of test files when implementing
+ * or expanding test coverage for changed code.
  *
- * Handles creation or update of test files for normal (new) test generation.
+ * For normal "new feature" test generation:
+ *   - The user changed or added code
+ *   - The gating step decides we need new or updated tests
+ *   - We call handleTestGeneration(...), which:
+ *       1) Gathers proposals from the LLM
+ *       2) Writes them to disk
+ *       3) Commits them
  *
- * Updated to also commit those new/updated test files after writing them to disk.
+ * The actual logic to *fix* failing tests after they've been written
+ * is in `test-fix.ts`, which is a separate flow.
+ * --------------------------------------------------------------------
  */
 
 import { generateObject } from "ai"
@@ -14,11 +25,10 @@ import { ReviewAnalysis } from "./code-review"
 import { updateComment } from "./github-comments"
 import { getLLMModel } from "./llm"
 import { PullRequestContextWithTests } from "./pr-context"
-import { commitChanges } from "./text-to-feature" // <--- Import commitChanges
-// ^ We already import commitTestsLocally from here, so let's keep it below
+import { commitChanges } from "./text-to-feature"
 
 // -------------------------------------
-// 1) Export the schema so we can reuse
+// 1) Zod schema for test proposals
 // -------------------------------------
 export const testProposalsSchema = z.object({
   testProposals: z.array(
@@ -34,7 +44,7 @@ export const testProposalsSchema = z.object({
 })
 
 // -------------------------------------
-// 2) Export the TestProposal interface
+// 2) Definition of a TestProposal
 // -------------------------------------
 export interface TestProposal {
   filename: string
@@ -42,15 +52,20 @@ export interface TestProposal {
   actions: {
     action: "create" | "update" | "rename"
     oldFilename: string
-    // oldFilename is only used if action=rename
   }
 }
 
 /**
  * handleTestGeneration:
- * - Called when we want to do “normal” new or updated tests after code changes
- * - Gathers proposals, writes them locally, and then commits/pushes them
- * - Updates the GitHub PR comment accordingly
+ * ------------------------------------------------------------------
+ * This is called if gating says we do need new tests for the
+ * changed code.
+ * Steps:
+ *   1) Post an update to the PR comment.
+ *   2) Use generateTestsForChanges(...) to get an array of
+ *      new or updated test files.
+ *   3) Write them locally, commit & push them.
+ *   4) Update the PR comment with the final list of new tests.
  */
 export async function handleTestGeneration(
   octokit: any,
@@ -62,20 +77,21 @@ export async function handleTestGeneration(
   testBody += "\n\n**Generating Tests**..."
   await updateComment(octokit, context, testCommentId, testBody)
 
+  // Possibly incorporate code review suggestions
   let recommendation = ""
   if (reviewAnalysis) {
     recommendation = `Review Analysis:\n${reviewAnalysis.summary}`
   }
 
-  // Generate proposals with the normal flow
+  // 1) Generate the test proposals
   const proposals = await generateTestsForChanges(context, recommendation)
 
+  // 2) If proposals, write them, commit them
   if (proposals.length > 0) {
     await commitTestsLocally(proposals)
-
-    // After writing them, actually commit/push so they're on the PR branch
     commitChanges("AI test generation - final pass")
 
+    // Update PR comment
     testBody += "\n\n**Proposed new/updated tests:**\n"
     for (const p of proposals) {
       testBody += `- ${p.filename}\n`
@@ -89,16 +105,21 @@ export async function handleTestGeneration(
 
 /**
  * generateTestsForChanges:
- * - Builds a prompt for normal (new) test generation based on changed files, existing tests, etc.
+ * ------------------------------------------------------------------
+ * Builds a prompt with the changed files, existing tests,
+ * and review feedback. Asks the LLM to propose new or updated tests
+ * in a JSON format.
  */
 export async function generateTestsForChanges(
   context: PullRequestContextWithTests,
   recommendation: string
 ): Promise<TestProposal[]> {
+  // Summaries of existing tests
   const existingTestsPrompt = context.existingTestFiles
     .map(f => `Existing test: ${f.filename}\n---\n${f.content}`)
     .join("\n")
 
+  // Summaries of changed files
   const changedFilesPrompt = context.changedFiles
     .map(file => {
       if (file.excluded) return `File: ${file.filename} [EXCLUDED FROM PROMPT]`
@@ -133,9 +154,7 @@ ${changedFilesPrompt}
 Existing Tests:
 ${existingTestsPrompt}
 `
-  console.log(
-    `\n\n--- Test Generation Prompt ---\n${prompt}\n--- End Prompt ---\n`
-  )
+  console.log(`\n--- Test Generation Prompt ---\n${prompt}\n---`)
 
   const modelInfo = getLLMModel()
   try {
@@ -146,8 +165,9 @@ ${existingTestsPrompt}
       schemaDescription: "Proposed test files in JSON",
       prompt
     })
+
     console.log(
-      `\n\n--- Test Generation Result ---\n${JSON.stringify(result, null, 2)}\n--- End ---\n`
+      `\n--- Test Generation Result ---\n${JSON.stringify(result.object, null, 2)}\n---`
     )
     return result.object.testProposals
   } catch (err) {
@@ -157,7 +177,14 @@ ${existingTestsPrompt}
 
 /**
  * commitTestsLocally:
- * - Writes or updates each test file on disk (but doesn't commit or push).
+ * ------------------------------------------------------------------
+ * Takes the array of test proposals (each containing a filename
+ * and content) and writes them to disk. If the "action" is "rename",
+ * we remove the old file first. We do not auto-delete or handle
+ * older tests unless explicitly told to rename or update them.
+ *
+ * This doesn't commit them to Git automatically; the caller must
+ * call commitChanges(...) to finalize them in the repo.
  */
 export async function commitTestsLocally(proposals: TestProposal[]) {
   for (const p of proposals) {
@@ -173,7 +200,7 @@ export async function commitTestsLocally(proposals: TestProposal[]) {
       }
     }
 
-    // Write/overwrite the file
+    // Write or overwrite the file
     const localPath = path.join(process.cwd(), p.filename)
     fs.mkdirSync(path.dirname(localPath), { recursive: true })
     fs.writeFileSync(localPath, p.testContent, "utf-8")

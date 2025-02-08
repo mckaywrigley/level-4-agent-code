@@ -1,8 +1,14 @@
 /**
- * This file implements a "gating" step:
- * Decides whether test generation is needed at all (true/false).
- * We haven't changed the local vs remote logic here, because gating
- * only reads from a context object that we already constructed from local diffs.
+ * test-gating.ts
+ * --------------------------------------------------------------------
+ * "Gating" step: Decides if we need new test generation at all, based
+ * on changed files, existing tests, and possibly code review feedback.
+ *
+ * Example usage:
+ *  - If the AI sees that we've only changed documentation or styling,
+ *    it might skip generating new tests.
+ *  - If there's a significant new feature, it might say we do need new tests.
+ * --------------------------------------------------------------------
  */
 
 import { generateObject } from "ai"
@@ -12,7 +18,7 @@ import { updateComment } from "./github-comments"
 import { getLLMModel } from "./llm"
 import { PullRequestContextWithTests } from "./pr-context"
 
-// We define a simple schema for the gating decision JSON.
+// Zod schema for the gating decision
 const gatingSchema = z.object({
   decision: z.object({
     shouldGenerateTests: z.boolean(),
@@ -23,8 +29,10 @@ const gatingSchema = z.object({
 
 /**
  * gatingStep:
- * - Posts a comment indicating that we're checking if test generation is necessary.
- * - Calls gatingStepLogic to evaluate the PR changes, existing tests, and code review notes.
+ * ------------------------------------------------------------------
+ * 1) Posts a "we're checking tests" message on the PR.
+ * 2) Calls gatingStepLogic(...) to see if we need new tests.
+ * 3) Updates the PR comment with the gating result (e.g. "Skipping or continuing").
  */
 export async function gatingStep(
   context: PullRequestContextWithTests,
@@ -36,7 +44,7 @@ export async function gatingStep(
   testBody += "\n\n**Gating Step**: Checking if we should generate tests..."
   await updateComment(octokit, context, testCommentId, testBody)
 
-  // Evaluate the gating logic (calls the LLM)
+  // Evaluate gating logic
   const gating = await gatingStepLogic(context, reviewAnalysis)
   if (!gating.shouldGenerate) {
     testBody += `\n\nSkipping test generation: ${gating.reason}`
@@ -52,14 +60,16 @@ export async function gatingStep(
 
 /**
  * gatingStepLogic:
- * - Builds a prompt that includes the changed files, existing tests, and any code review notes.
- * - Asks the LLM to return JSON with a "shouldGenerateTests" boolean.
+ * ------------------------------------------------------------------
+ * Builds a prompt that includes changed files, existing tests,
+ * and code review notes. Asks the LLM to return a simple JSON
+ * with a boolean "shouldGenerateTests".
  */
 async function gatingStepLogic(
   context: PullRequestContextWithTests,
   reviewAnalysis?: ReviewAnalysis
 ) {
-  // Summaries of existing tests from the local context
+  // Summaries of existing tests
   const existingTestsPrompt = context.existingTestFiles
     .map(f => `Existing test: ${f.filename}\n---\n${f.content}`)
     .join("\n")
@@ -80,7 +90,7 @@ async function gatingStepLogic(
   const prompt = `
 You are an expert in deciding if tests are needed.
 
-If you see *anything* new that should be tested or that breaks existing tests, return true. 
+If you see *anything* new that should be tested or that breaks existing tests, return true.
 Only generate tests for frontend code in /app. Only unit tests in __tests__/unit.
 
 Return JSON only:
@@ -101,9 +111,8 @@ Existing Tests:
 ${existingTestsPrompt}
 ${combinedRec}
 `
-  console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`Gating prompt:\n${prompt}`)
-  console.log(`--------------------------------\n\n\n\n\n`)
+
+  console.log(`\n--- Gating Prompt ---\n${prompt}\n---`)
   const model = getLLMModel()
 
   try {
@@ -119,15 +128,17 @@ ${combinedRec}
         }
       }
     })
-    console.log(`\n\n\n\n\n--------------------------------`)
-    console.log(`Gating result:\n${JSON.stringify(result.object, null, 2)}`)
-    console.log(`--------------------------------\n\n\n\n\n`)
+
+    console.log(
+      `\n--- Gating Result ---\n${JSON.stringify(result.object, null, 2)}\n---`
+    )
     return {
       shouldGenerate: result.object.decision.shouldGenerateTests,
       reason: result.object.decision.reasoning,
       recommendation: result.object.decision.recommendation
     }
   } catch (err) {
+    // If an error occurs, default to no new tests
     return { shouldGenerate: false, reason: "Gating error", recommendation: "" }
   }
 }

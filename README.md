@@ -4,96 +4,107 @@ This repository demonstrates a **Level 4 AI Agent** that plans and implements a 
 
 Find a full tutorial [here](https://www.jointakeoff.com/courses/series-5-levels-of-agents-coding-agents) on Takeoff.
 
+---
+
 ## How It Works
 
-### 1. Manual Trigger
+1. **Manual Trigger**
 
-- A developer or user triggers a [GitHub Actions workflow](.github/workflows/ai-agent.yml) manually from the **Actions** tab, passing in a `feature_request` input describing what they want to build or change.
+   - A developer or user triggers a [GitHub Actions workflow](.github/workflows/ai-agent.yml) manually from the **Actions** tab, passing in a `feature_request` input describing what they want to build or change.
+   - This `feature_request` is the core instruction that the AI uses to plan and implement changes.
 
-### 2. AI Planning
+2. **AI Planning**
 
-- The **Planner Agent** (`lib/agents/planner.ts`) reads your `feature_request` and breaks it into an ordered list of steps (e.g., Step1, Step2, etc.).
-- Each step has a short description and a plan for the coding changes needed.
+   - The **Planner Agent** (`lib/agents/planner.ts`) processes your `feature_request` and breaks it into an ordered list of steps (e.g., Step1, Step2, etc.).
+   - Each step contains:
+     - **Name** (for clarity)
+     - **Description** (what the step aims to achieve)
+     - **Plan** (specific coding actions needed)
 
-### 3. Pull Request
+3. **Pull Request Initialization**
 
-- The workflow script (`scripts/master-flow.ts`) checks out the `main` branch locally, creates a new feature branch (e.g., `agent/add-login`) if one doesn’t exist, then opens a pull request from that branch → `main`.
-- All subsequent changes are pushed to this branch, so we can attach AI reviews to the PR.
+   - The workflow script (`scripts/master-flow.ts`) checks out the `main` branch locally, creates a new feature branch (e.g., `agent/add-login`) if one doesn’t exist, then opens a pull request from that branch to `main`.
+   - By creating a dedicated branch, each code change is pushed there, allowing automatic reviews and comments to be posted to a single PR thread.
 
-### 4. Step-by-Step Implementation
+4. **Step-by-Step Implementation**
 
-For each step in the plan:
+   For each planned step:
 
-1. **Text-to-Feature** (`lib/agents/text-to-feature.ts`) uses an LLM to propose file changes for that step, based on prior context (i.e., the changes so far).
-2. The script applies these file changes locally, commits, and pushes.
-3. **Partial AI Review**:
-   - We run `runFlowOnLatestCommit(...)`, which uses a “compare commits” approach to find only the new diff from the last commit and do a partial code review/test generation/fix loop on that commit:
-     1. AI code review for the latest commit’s changes.
-     2. Test gating & test generation for the new/modified files.
-     3. Local test run (`npm run test`). If failing, we do an iterative fix loop up to 3 times.
-   - If everything passes, we proceed to the next step. Otherwise, we fail early.
+   1. **Text-to-Feature** (`lib/agents/text-to-feature.ts`) uses an LLM to propose file changes for that step, referencing the codebase context and any accumulated modifications so far.
+   2. The script applies these file changes locally, commits, and pushes.
+   3. **Partial AI Review** is performed on just the new commit:
+      - We run `runFlowOnLatestCommit(...)`, which uses local git commands to find only the new diff and do a partial code review/test generation/fix loop:
+        1. **AI code review** for the latest commit’s changes.
+        2. **Test gating & test generation** if needed for the new/modified code.
+        3. **Local test run** (`npm run test`). If failing, the agent attempts iterative fixes (up to 3 times).
+      - If everything passes, we proceed to the next step. Otherwise, the workflow fails early.
 
-### 5. Final Full Review
+5. **Final Full Review**
 
-- After all steps pass, we do one last **full** AI review/test cycle:
-  1. We build a full PR context including _all_ changes from this feature branch.
-  2. The AI Agent does a complete code review, test gating, test generation, and iterative fix cycle again, this time on the entire set of changes.
-  3. If we pass, success! If not, we fail the workflow.
+   - After all steps pass, we do one last **full** AI review/test cycle on the entire PR:
+     1. Build a **full PR context** (diff from `main` to the current branch).
+     2. The AI agent conducts a **complete** code review, test gating, test generation, and iterative fix cycle for the entire set of changes.
+     3. If tests eventually pass, success! Otherwise, the workflow fails.
 
-### 6. Ready for Review
+6. **Ready for Review**
 
-- If the final full review/test cycle is successful, we mark the PR as “ready for review” by removing the draft status.
-- At this point, the new feature is available in the PR for final human checks and merging.
+   - If the final full review/test cycle is successful, the script marks the PR as “ready for review.”
+   - At this point, the new feature is available in the PR for final human checks and merging.
 
 ---
 
 ## File & Folder Breakdown
 
 - **`.github/workflows/ai-agent.yml`**  
-  Defines the GitHub Actions workflow. Manually triggered with an input `feature_request`.
+  Defines the GitHub Actions workflow. Manually triggered with a `feature_request` describing the desired feature.
 
   - Installs dependencies and runs `scripts/master-flow.ts`.
 
 - **`scripts/master-flow.ts`**  
   The main script orchestrating the entire “plan → partial commit steps → final review” flow.
 
-  1. Switches/creates a new feature branch.
-  2. Ensures a PR is open.
-  3. Runs the **Planner Agent** to get steps.
+  1. Switch/create a feature branch.
+  2. Open or find an existing PR.
+  3. Run the **Planner Agent** to get a list of steps.
   4. For each step:
-     - Asks **Text-to-Feature** to propose changes.
-     - Commits/pushes them.
-     - Calls **`runFlowOnLatestCommit`** to do partial code review/test generation/fix.
-  5. After all steps, calls **`runFlowOnPR`** for a final full PR-based review/test pass.
-  6. If successful, marks the PR as non-draft.
+     - Ask **Text-to-Feature** to propose changes.
+     - Commit/push them.
+     - Call **`runFlowOnLatestCommit`** to do a partial code review/test generation/fix loop on just that commit.
+  5. After all steps, calls **`runFlowOnPR`** for the final, all-inclusive review/test pass.
+  6. If successful, updates the PR to signal that it’s ready for final human review.
 
-- **`lib/agents/planner.ts`**  
-  Planner Agent that takes your feature request and breaks it into steps.
+- **`lib/agents/planner.ts`**
 
-- **`lib/agents/text-to-feature.ts`**  
-  Takes a single step’s description and the “accumulated changes,” returning new or updated file contents. Commits these to the feature branch.
+  - **Planner Agent** that reads the `feature_request` and splits it into a multi-step plan.
 
-- **`lib/agents/commit-step-flow.ts`** (example name)  
-  Exposes `runFlowOnLatestCommit(...)`, which:
+- **`lib/agents/text-to-feature.ts`**
 
-  1. Compares HEAD~1 to HEAD to get the new commit’s diff.
-  2. Builds a partial context for that commit.
-  3. Runs code review, gating, test generation, iterative fix, etc. but only on that commit’s changes.
+  - Takes a single step’s instructions plus any previous modifications and returns new or updated file contents.
+  - Commits these changes to the feature branch locally.
 
-- **`lib/agents/pr-step-flow.ts`**  
-  Exposes `runFlowOnPR(...)`, a more standard approach that sees the entire PR’s changes. Used for the final “full” pass.
+- **`lib/agents/commit-step-flow.ts`**
 
-- **`lib/agents/pr-context.ts`**  
-  Defines how we gather PR data (files changed, commit messages). The final pass uses the entire PR. For partial commits, we do a custom “compareCommitsForPR(...)” approach.
+  - Exposes `runFlowOnLatestCommit(...)` for partial code reviews and potential fixes of only the latest commit’s changes.
 
-- **`lib/agents/test-*.ts`** (test gating, test proposals, test fix)  
-  Handles test-related logic: deciding if tests are needed, generating them, or iteratively fixing failing tests.
+- **`lib/agents/pr-step-flow.ts`**
 
-- **`lib/agents/code-review.ts`**  
-  Orchestrates the AI-based code review step.
+  - Exposes `runFlowOnPR(...)`, handling a **full** pass over all changes in the branch (final review stage).
 
-- **`lib/agents/test-runner.ts`**  
-  Runs `npm run test` locally, capturing the output to see if tests pass or fail.
+- **`lib/agents/pr-context.ts`**
+
+  - Defines how we build or parse a “Pull Request Context” from local git diffs (base..HEAD), storing the changed files and commit messages.
+  - The final pass uses the entire PR diff, while partial passes only handle the latest commit.
+
+- **`lib/agents/test-*.ts`**
+
+  - Handles test logic: gating (deciding whether new tests are needed), proposals (generating new tests), and fixes (iterating if they fail).
+
+- **`lib/agents/code-review.ts`**
+
+  - Orchestrates the AI-based code review. Summaries, file analyses, suggestions are posted on the PR.
+
+- **`lib/agents/test-runner.ts`**
+  - Runs `npm run test` locally, capturing Jest output to see if tests pass or fail.
 
 ---
 
@@ -102,41 +113,41 @@ For each step in the plan:
 1. **Set up environment variables**
 
    - Copy `.env.example` to `.env.local`. Provide your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
-   - Optionally define `LLM_PROVIDER` (`openai` or `anthropic`).
+   - (Optional) Define `LLM_PROVIDER` as `"openai"` or `"anthropic"` to choose your model.
 
 2. **Trigger the Workflow**
 
    - Go to **Actions** → **AI Agent Flow (Manual)** → **Run workflow**.
-   - Provide a `feature_request` describing what you want built/changed.
+   - Provide a `feature_request` describing the feature/change you want.
 
 3. **Observe the Workflow**
 
-   - The workflow logs show the AI planner’s steps.
-   - For each step, you’ll see partial code diffs committed.
-   - The partial code review/test generation/fix runs in the logs.
-   - After all steps, a final full pass is done. If everything passes, the PR is marked ready for review.
+   - The workflow logs show how the AI planner breaks your request into steps.
+   - Each step commits partial changes with an AI-based review and test generation/fix cycle.
+   - After the final step, a full suite test is run, and if it passes, the PR is declared “ready for review.”
 
-4. **Check the PR**
-   - GitHub’s Pull Requests section will show a PR from `agent/<feature>` to `main`.
-   - You can watch as the AI posts “AI Code Review” and “AI Test Generation” comments for each step’s commit, plus for the final pass.
-   - If you’re happy, you can merge or continue normal dev.
+4. **Check the Pull Request**
+
+   - In GitHub’s Pull Requests tab, you’ll see a new PR from `agent/<feature>` to `main`.
+   - The AI posts comments about code review and test generation for each commit, plus a final summary.
+   - Merge when you’re satisfied, or continue normal development.
 
 ---
 
 ## FAQ
 
 **Q**: Why partial reviews each step?  
-**A**: So the AI logic can specifically focus on new changes from each step, rather than re-reviewing the entire PR each time.
+**A**: This allows the AI to focus specifically on newly added changes, making it easier to isolate issues incrementally instead of dealing with a large final diff all at once.
 
 **Q**: Why a final full PR pass?  
-**A**: Ensures everything is tested together, preventing surprises where steps pass individually but break collectively.
+**A**: Ensures comprehensive coverage and prevents discrepancies where individually passing steps could conflict collectively.
 
 **Q**: Can I do more than 3 fix iterations?  
-**A**: Yes, modify `const maxIterations = 3` in the flows to your preferred limit.
+**A**: Yes. In the code (e.g., `pr-step-flow.ts` or `commit-step-flow.ts`), change `const maxIterations = 3` to any number you prefer.
 
-**Q**: What if I need the full file contents for partial commits?  
-**A**: By default, we only fetch partial diffs. If you need the entire content, adapt the logic in `compareCommitsForPR(...)` to fetch file contents similarly to `buildPRContext`.
+**Q**: What if I need the entire file content for partial commits?  
+**A**: Currently, partial commits rely on local `git diff`. If full file context is needed, you can customize `compareCommitsForPR(...)` or similar logic to retrieve complete files.
 
 ---
 
-Enjoy the multi-step AI agent workflow!
+**Enjoy building your multi-step AI agent workflow!**

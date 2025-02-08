@@ -1,6 +1,9 @@
 /**
+ * test-proposals.ts
+ *
  * Handles creation or update of test files for normal (new) test generation.
- * Also exports the zod schema and TestProposal interface for reuse in fix flows.
+ *
+ * Updated to also commit those new/updated test files after writing them to disk.
  */
 
 import { generateObject } from "ai"
@@ -11,6 +14,8 @@ import { ReviewAnalysis } from "./code-review"
 import { updateComment } from "./github-comments"
 import { getLLMModel } from "./llm"
 import { PullRequestContextWithTests } from "./pr-context"
+import { commitChanges } from "./text-to-feature" // <--- Import commitChanges
+// ^ We already import commitTestsLocally from here, so let's keep it below
 
 // -------------------------------------
 // 1) Export the schema so we can reuse
@@ -37,13 +42,15 @@ export interface TestProposal {
   actions: {
     action: "create" | "update" | "rename"
     oldFilename: string
+    // oldFilename is only used if action=rename
   }
 }
 
 /**
  * handleTestGeneration:
  * - Called when we want to do “normal” new or updated tests after code changes
- * - Gathers proposals, commits them, and updates the GitHub PR comment.
+ * - Gathers proposals, writes them locally, and then commits/pushes them
+ * - Updates the GitHub PR comment accordingly
  */
 export async function handleTestGeneration(
   octokit: any,
@@ -65,6 +72,10 @@ export async function handleTestGeneration(
 
   if (proposals.length > 0) {
     await commitTestsLocally(proposals)
+
+    // After writing them, actually commit/push so they're on the PR branch
+    commitChanges("AI test generation - final pass")
+
     testBody += "\n\n**Proposed new/updated tests:**\n"
     for (const p of proposals) {
       testBody += `- ${p.filename}\n`
@@ -122,9 +133,9 @@ ${changedFilesPrompt}
 Existing Tests:
 ${existingTestsPrompt}
 `
-  console.log(`\n\n\n\n\n--------------------------------`)
-  console.log(`Test prompt:\n${prompt}`)
-  console.log(`--------------------------------\n\n\n\n\n`)
+  console.log(
+    `\n\n--- Test Generation Prompt ---\n${prompt}\n--- End Prompt ---\n`
+  )
 
   const modelInfo = getLLMModel()
   try {
@@ -133,16 +144,11 @@ ${existingTestsPrompt}
       schema: testProposalsSchema,
       schemaName: "testProposals",
       schemaDescription: "Proposed test files in JSON",
-      prompt,
-      providerOptions: {
-        openai: {
-          reasoningEffort: "high"
-        }
-      }
+      prompt
     })
-    console.log(`\n\n\n\n\n--------------------------------`)
-    console.log(`Test result:\n${JSON.stringify(result.object, null, 2)}`)
-    console.log(`--------------------------------\n\n\n\n\n`)
+    console.log(
+      `\n\n--- Test Generation Result ---\n${JSON.stringify(result, null, 2)}\n--- End ---\n`
+    )
     return result.object.testProposals
   } catch (err) {
     return []
@@ -151,8 +157,7 @@ ${existingTestsPrompt}
 
 /**
  * commitTestsLocally:
- * - Writes or updates each test file on disk.
- * - We do not push them from here; the main flow does commits.
+ * - Writes or updates each test file on disk (but doesn't commit or push).
  */
 export async function commitTestsLocally(proposals: TestProposal[]) {
   for (const p of proposals) {

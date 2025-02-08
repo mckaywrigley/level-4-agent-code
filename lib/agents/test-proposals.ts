@@ -145,71 +145,10 @@ ${existingTestsPrompt}
       `Test proposals result:\n${JSON.stringify(result.object, null, 2)}`
     )
     console.log(`--------------------------------\n\n\n\n\n`)
-    return finalizeTestProposals(result.object.testProposals, context)
+    return result.object.testProposals
   } catch (err) {
     return []
   }
-}
-
-/**
- * finalizeTestProposals:
- * - Adjusts test file naming or paths to .test.tsx or .test.ts
- * - Ensures tests end up under __tests__/unit/
- * - If we have both .test.ts and .test.tsx for same base, prefer .test.tsx
- */
-function finalizeTestProposals(
-  rawProposals: TestProposal[],
-  context: PullRequestContextWithTests
-): TestProposal[] {
-  // Attempt to detect React code. If there's a changed file with .tsx or import React, assume React test.
-  const isReact = context.changedFiles.some(file => {
-    if (!file.content) return false
-    return (
-      file.filename.endsWith(".tsx") ||
-      file.content.includes("import React") ||
-      file.content.includes('from "react"')
-    )
-  })
-
-  let proposals = rawProposals.map(proposal => {
-    let newFilename = proposal.filename
-    if (isReact && !newFilename.endsWith(".test.tsx")) {
-      newFilename = newFilename.replace(/\.test\.ts$/, ".test.tsx")
-    } else if (!isReact && !newFilename.endsWith(".test.ts")) {
-      newFilename = newFilename.replace(/\.test\.tsx$/, ".test.ts")
-    }
-
-    if (!newFilename.includes("__tests__/unit")) {
-      newFilename = `__tests__/unit/${newFilename}`
-    }
-    return { ...proposal, filename: newFilename }
-  })
-
-  // Remove duplicates if we have both .test.ts and .test.tsx for the same base name
-  const seenBases = new Map<string, TestProposal>()
-  const filtered: TestProposal[] = []
-
-  for (const proposal of proposals) {
-    const baseName = proposal.filename.replace(/\.test\.tsx?$/, "")
-    const existing = seenBases.get(baseName)
-    if (!existing) {
-      seenBases.set(baseName, proposal)
-      filtered.push(proposal)
-    } else {
-      const oldIsTsx = existing.filename.endsWith(".test.tsx")
-      const newIsTsx = proposal.filename.endsWith(".test.tsx")
-
-      if (newIsTsx && !oldIsTsx) {
-        const indexToRemove = filtered.indexOf(existing)
-        if (indexToRemove !== -1) {
-          filtered.splice(indexToRemove, 1)
-        }
-        filtered.push(proposal)
-        seenBases.set(baseName, proposal)
-      }
-    }
-  }
-  return filtered
 }
 
 /**
